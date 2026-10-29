@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fuel Reports</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f7fb;
+            padding: 20px;
+            margin: 0;
+            color: #1e293b;
+        }
+
+        h1, h2 {
+            color: #173b68;
+        }
+
+        .section {
+            background: white;
+            padding: 18px;
+            margin: 18px 0;
+            border-radius: 8px;
+            overflow-x: auto;
+            box-shadow: 0 2px 8px #0000000d;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 9px;
+            text-align: left;
+        }
+
+        th {
+            background: #173b68;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background: #f4f7fb;
+        }
+
+        a {
+            color: #173b68;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .empty {
+            color: #64748b;
+        }
+    </style>
+</head>
+
+<body>
+    <a href="/">← Dashboard</a>
+
+    <h1>Fuel Consumption Reports</h1>
+
+    {% for title, rows in [
+        ("Vehicle Expense Report", vehicle_expenses),
+        ("Monthly Expense Report", monthly_expenses),
+        ("Vehicle Comparison Report", vehicle_comparison),
+        ("Period Comparison Report", period_comparison)
+    ] %}
+
+    <div class="section">
+        <h2>{{ title }}</h2>
+
+        {% if rows %}
+        <table>
+            <thead>
+                <tr>
+                    {% for key in rows[0].keys() %}
+                    <th>{{ key.replace('_', ' ')|title }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for value in row.values() %}
+                    <td>{{ value if value is not none else '—' }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        {% else %}
+        <p class="empty">No report data available.</p>
+        {% endif %}
+    </div>
+
+    {% endfor %}
+
+    <p>
+        <a href="/invalid-readings">View Invalid Readings Log →</a>
+    </p>
+
+</body>
+</html>

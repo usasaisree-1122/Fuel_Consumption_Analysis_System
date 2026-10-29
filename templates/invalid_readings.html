@@ -1,0 +1,140 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Validation Report</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f7fb;
+            margin: 0;
+            padding: 25px;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 3px 12px #ddd;
+        }
+
+        h1 { color: #173b68; }
+
+        .summary {
+            background: #fff0f0;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .table-container { overflow-x: auto; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 11px;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        th {
+            background: #173b68;
+            color: white;
+        }
+
+        tr:nth-child(even) { background: #f7f9fc; }
+
+        .invalid {
+            color: #b42318;
+            font-weight: bold;
+        }
+
+        .valid {
+            color: #16803c;
+            font-weight: bold;
+        }
+
+        .back {
+            display: inline-block;
+            margin-bottom: 15px;
+            color: #173b68;
+            text-decoration: none;
+        }
+
+        .empty {
+            padding: 20px;
+            text-align: center;
+            color: #16803c;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container">
+
+    <a class="back" href="/">← Back to Dashboard</a>
+
+    <h1>Log Validation Report</h1>
+    <p>Review fuel logs and identify invalid readings.</p>
+
+    <div class="summary">
+        <strong>Invalid Records:</strong>
+        {{ records|length }}
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Entry ID</th>
+                    <th>Vehicle</th>
+                    <th>Fuel Date</th>
+                    <th>Previous Odometer</th>
+                    <th>Current Odometer</th>
+                    <th>Distance (km)</th>
+                    <th>Fuel (L)</th>
+                    <th>Price/L (₹)</th>
+                    <th>Validation Status</th>
+                    <th>Validation Reason</th>
+                </tr>
+            </thead>
+
+            <tbody>
+            {% for record in records %}
+                <tr>
+                    <td>{{ record.entry_id }}</td>
+                    <td>{{ record.vehicle_name }}</td>
+                    <td>{{ record.fuel_date }}</td>
+                    <td>{{ record.previous_odometer }}</td>
+                    <td>{{ record.current_odometer }}</td>
+                    <td>{{ record.distance }}</td>
+                    <td>{{ record.fuel_litres }}</td>
+                    <td>{{ record.price_per_litre }}</td>
+                    <td class="invalid">INVALID</td>
+                    <td>{{ record.validation_reason }}</td>
+                </tr>
+            {% else %}
+                <tr>
+                    <td colspan="10" class="empty">
+                        No invalid records found.
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+</div>
+</body>
+</html>

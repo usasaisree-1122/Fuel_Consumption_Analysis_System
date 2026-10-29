@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manage Vehicles</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 25px; background: #f4f7fb; color: #222; }
+        h1, h2 { color: #183b65; }
+        .card { background: white; padding: 20px; border-radius: 10px; margin-bottom: 22px; box-shadow: 0 2px 8px #ddd; }
+        form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        label { display: block; font-weight: bold; margin-bottom: 6px; }
+        input, select, button { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #1769aa; color: white; border: 0; cursor: pointer; font-weight: bold; }
+        button:hover { background: #104b7b; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { padding: 11px; border: 1px solid #ddd; text-align: left; }
+        th { background: #183b65; color: white; }
+        .message { padding: 12px; margin: 8px 0; border-radius: 5px; }
+        .error { background: #ffe5e5; color: #9b111e; }
+        .success { background: #e0f6e7; color: #146c35; }
+        .links a { margin-right: 15px; }
+        .table-wrap { overflow-x: auto; }
+    </style>
+</head>
+<body>
+
+    <h1>Vehicle Management</h1>
+
+    <div class="links">
+        <a href="/">Dashboard</a>
+        <a href="/fuel-entries">Fuel Entries</a>
+        <a href="/reports">Reports</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="message {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="card">
+        <h2>Add New Vehicle</h2>
+
+        <form method="POST" action="{{ url_for('vehicles') }}">
+            <div>
+                <label for="vehicle_name">Vehicle Name</label>
+                <input type="text" id="vehicle_name" name="vehicle_name"
+                       placeholder="e.g. Honda City"
+                       minlength="2" maxlength="80" required>
+            </div>
+
+            <div>
+                <label for="vehicle_number">Registration Number</label>
+                <input type="text" id="vehicle_number" name="vehicle_number"
+                       placeholder="e.g. AP03AB1234"
+                       maxlength="15" pattern="[A-Za-z]{2}[0-9]{1,2}[A-Za-z]{1,3}[0-9]{1,4}"
+                       title="Example: AP03AB1234" required>
+            </div>
+
+            <div>
+                <label for="vehicle_type">Vehicle Type</label>
+                <select id="vehicle_type" name="vehicle_type" required>
+                    <option value="">Select type</option>
+                    {% for item in vehicle_types %}
+                        <option value="{{ item }}">{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label for="fuel_type">Fuel Type</label>
+                <select id="fuel_type" name="fuel_type" required>
+                    <option value="">Select fuel</option>
+                    {% for item in fuel_types %}
+                        <option value="{{ item }}">{{ item }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div style="align-self:end">
+                <button type="submit">Add Vehicle</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Registered Vehicles</h2>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Vehicle Name</th>
+                        <th>Registration Number</th>
+                        <th>Vehicle Type</th>
+                        <th>Fuel Type</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for vehicle in vehicles %}
+                    <tr>
+                        <td>{{ vehicle.vehicle_id }}</td>
+                        <td>{{ vehicle.vehicle_name }}</td>
+                        <td>{{ vehicle.vehicle_number }}</td>
+                        <td>{{ vehicle.vehicle_type }}</td>
+                        <td>{{ vehicle.fuel_type }}</td>
+                        <td>{{ vehicle.created_at or "-" }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6">No vehicles registered yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</body>
+</html>

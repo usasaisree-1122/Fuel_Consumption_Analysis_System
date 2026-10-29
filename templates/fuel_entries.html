@@ -1,0 +1,148 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fuel Entries</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 25px; background: #f4f7fb; color: #222; }
+        h1, h2 { color: #183b65; }
+        .card { background: white; padding: 20px; border-radius: 10px; margin-bottom: 22px; box-shadow: 0 2px 8px #ddd; }
+        form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+        label { display: block; font-weight: bold; margin-bottom: 6px; }
+        input, select, button { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        button { background: #1769aa; color: white; border: 0; cursor: pointer; font-weight: bold; }
+        button:hover { background: #104b7b; }
+        table { width: 100%; border-collapse: collapse; background: white; }
+        th, td { padding: 10px; border: 1px solid #ddd; text-align: left; white-space: nowrap; }
+        th { background: #183b65; color: white; }
+        .message { padding: 12px; margin: 8px 0; border-radius: 5px; }
+        .error { background: #ffe5e5; color: #9b111e; }
+        .success { background: #e0f6e7; color: #146c35; }
+        .links a { margin-right: 15px; }
+        .table-wrap { overflow-x: auto; }
+        .hint { font-size: 13px; color: #555; }
+    </style>
+</head>
+<body>
+
+    <h1>Fuel Entry Management</h1>
+
+    <div class="links">
+        <a href="/">Dashboard</a>
+        <a href="/vehicles">Vehicles</a>
+        <a href="/reports">Reports</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="message {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="card">
+        <h2>Add Fuel Entry</h2>
+        <p class="hint">Current odometer must be greater than previous odometer. Future dates and zero or negative fuel quantities/prices are not accepted.</p>
+
+        {% if vehicles %}
+        <form method="POST" action="{{ url_for('fuel_entries') }}">
+            <div>
+                <label for="vehicle_id">Vehicle</label>
+                <select id="vehicle_id" name="vehicle_id" required>
+                    <option value="">Select vehicle</option>
+                    {% for vehicle in vehicles %}
+                    <option value="{{ vehicle.vehicle_id }}">
+                        {{ vehicle.vehicle_name }} — {{ vehicle.vehicle_number }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label for="fuel_date">Fuel Date</label>
+                <input type="date" id="fuel_date" name="fuel_date"
+                       max="{{ now_date if now_date is defined else '' }}" required>
+            </div>
+
+            <div>
+                <label for="previous_odometer">Previous Odometer (km)</label>
+                <input type="number" id="previous_odometer" name="previous_odometer"
+                       min="0" step="0.01" placeholder="e.g. 12000" required>
+            </div>
+
+            <div>
+                <label for="current_odometer">Current Odometer (km)</label>
+                <input type="number" id="current_odometer" name="current_odometer"
+                       min="0.01" step="0.01" placeholder="e.g. 12300" required>
+            </div>
+
+            <div>
+                <label for="fuel_litres">Fuel Quantity (litres)</label>
+                <input type="number" id="fuel_litres" name="fuel_litres"
+                       min="0.01" step="0.01" placeholder="e.g. 20" required>
+            </div>
+
+            <div>
+                <label for="price_per_litre">Price per Litre (₹)</label>
+                <input type="number" id="price_per_litre" name="price_per_litre"
+                       min="0.01" step="0.01" placeholder="e.g. 105.50" required>
+            </div>
+
+            <div style="align-self:end">
+                <button type="submit">Save Fuel Entry</button>
+            </div>
+        </form>
+        {% else %}
+            <p>Please add a vehicle before recording fuel entries.</p>
+            <a href="/vehicles">Add a vehicle</a>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Fuel Entry Records</h2>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Entry ID</th>
+                        <th>Vehicle</th>
+                        <th>Registration</th>
+                        <th>Date</th>
+                        <th>Previous Odometer</th>
+                        <th>Current Odometer</th>
+                        <th>Distance (km)</th>
+                        <th>Fuel (L)</th>
+                        <th>Price/L (₹)</th>
+                        <th>Mileage (km/L)</th>
+                        <th>Total Cost (₹)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in entries %}
+                    <tr>
+                        <td>{{ entry.entry_id }}</td>
+                        <td>{{ entry.vehicle_name }}</td>
+                        <td>{{ entry.vehicle_number }}</td>
+                        <td>{{ entry.fuel_date }}</td>
+                        <td>{{ "%.2f"|format(entry.previous_odometer|float) }}</td>
+                        <td>{{ "%.2f"|format(entry.current_odometer|float) }}</td>
+                        <td>{{ "%.2f"|format(entry.distance|float) }}</td>
+                        <td>{{ "%.2f"|format(entry.fuel_litres|float) }}</td>
+                        <td>{{ "%.2f"|format(entry.price_per_litre|float) }}</td>
+                        <td>{{ "%.2f"|format(entry.mileage|float) }}</td>
+                        <td>₹{{ "%.2f"|format(entry.total_cost|float) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="11">No fuel entries available yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</body>
+</html>

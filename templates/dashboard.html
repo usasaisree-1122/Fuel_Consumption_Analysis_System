@@ -1,0 +1,232 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fuel Consumption Analysis System</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f3f6fa;
+            color: #1e293b;
+        }
+
+        header {
+            background: #123b5d;
+            color: white;
+            padding: 24px 5%;
+        }
+
+        header h1 { margin: 0 0 8px; }
+        header p { margin: 0; color: #dceaf5; }
+
+        nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 15px 5%;
+            background: white;
+            box-shadow: 0 2px 8px #0000000d;
+        }
+
+        nav a {
+            color: #123b5d;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        nav a:hover { text-decoration: underline; }
+
+        main {
+            width: 90%;
+            max-width: 1250px;
+            margin: 28px auto;
+        }
+
+        .section-heading { margin: 28px 0 15px; }
+        .section-heading p { color: #64748b; }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .summary-card {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 22px;
+            box-shadow: 0 3px 12px #0f172a0a;
+        }
+
+        .summary-card p {
+            color: #64748b;
+            margin: 0 0 12px;
+            font-size: 14px;
+        }
+
+        .summary-card h2 {
+            margin: 0;
+            font-size: 26px;
+            color: #123b5d;
+            overflow-wrap: anywhere;
+        }
+
+        .charts {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+        }
+
+        .chart-card {
+            min-width: 0;
+            background: white;
+            padding: 15px;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            box-shadow: 0 3px 12px #0f172a0a;
+        }
+
+        .chart-card h3 {
+            margin: 5px 5px 14px;
+            font-size: 17px;
+        }
+
+        .chart-card img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .notice {
+            background: #fff4d6;
+            border: 1px solid #f0d78a;
+            padding: 12px 15px;
+            border-radius: 8px;
+        }
+
+        footer {
+            text-align: center;
+            color: #64748b;
+            padding: 25px;
+            font-size: 13px;
+        }
+
+        @media (max-width: 850px) {
+            .summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .charts { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 480px) {
+            .summary-cards { grid-template-columns: 1fr; }
+            header h1 { font-size: 23px; }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1>Fuel Consumption Analysis System</h1>
+    <p>Monitor mileage, fuel consumption, and vehicle expenses.</p>
+</header>
+
+<nav>
+    <a href="/">Dashboard</a>
+    <a href="/vehicles">Vehicles</a>
+    <a href="/fuel-entries">Fuel Entries</a>
+    <a href="/reports">Reports</a>
+    <a href="/invalid-readings">Validation Report</a>
+</nav>
+
+<main>
+
+    {% if error_message %}
+        <div class="notice">{{ error_message }}</div>
+    {% endif %}
+
+    <section class="section-heading">
+        <h2>Dashboard Overview</h2>
+        <p>Summary of the data currently stored in MySQL.</p>
+    </section>
+
+    <section class="summary-cards">
+        <div class="summary-card">
+            <p>Total Vehicles</p>
+            <h2>{{ total_vehicles|default(0) }}</h2>
+        </div>
+
+        <div class="summary-card">
+            <p>Total Fuel Records</p>
+            <h2>{{ total_entries|default(0) }}</h2>
+        </div>
+
+        <div class="summary-card">
+            <p>Total Fuel Expense</p>
+            <h2>₹{{ "%.2f"|format(total_cost|default(0)|float) }}</h2>
+        </div>
+
+        <div class="summary-card">
+            <p>Average Mileage</p>
+            <h2>{{ "%.2f"|format(avg_mileage|default(0)|float) }} km/L</h2>
+        </div>
+    </section>
+
+    <section class="section-heading">
+        <h2>Fuel Analysis and Visualizations</h2>
+        <p>Compare efficiency, spending, consumption, and vehicle usage.</p>
+    </section>
+
+    <section class="charts">
+
+        <div class="chart-card">
+            <h3>1. Average Mileage by Vehicle</h3>
+            <img src="{{ url_for('static', filename='images/mileage_comparison.png') }}"
+                 alt="Average mileage comparison chart">
+        </div>
+
+        <div class="chart-card">
+            <h3>2. Monthly Fuel Expenses</h3>
+            <img src="{{ url_for('static', filename='images/monthly_expenses.png') }}"
+                 alt="Monthly fuel expenses chart">
+        </div>
+
+        <div class="chart-card">
+            <h3>3. Fuel Consumption by Vehicle</h3>
+            <img src="{{ url_for('static', filename='images/fuel_consumption.png') }}"
+                 alt="Fuel consumption by vehicle chart">
+        </div>
+
+        <div class="chart-card">
+            <h3>4. Fuel Cost per Kilometre</h3>
+            <img src="{{ url_for('static', filename='images/cost_per_kilometre.png') }}"
+                 alt="Fuel cost per kilometre chart">
+        </div>
+
+        <div class="chart-card">
+            <h3>5. Monthly Fuel Consumption</h3>
+            <img src="{{ url_for('static', filename='images/monthly_consumption.png') }}"
+                 alt="Monthly fuel consumption chart">
+        </div>
+
+        <div class="chart-card">
+            <h3>6. Total Distance Travelled by Vehicle</h3>
+            <img src="{{ url_for('static', filename='images/vehicle_performance.png') }}"
+                 alt="Total distance travelled by vehicle chart">
+        </div>
+
+    </section>
+</main>
+
+<footer>
+    Fuel Consumption Analysis System | Python | Flask | MySQL | Pandas | Matplotlib
+</footer>
+
+</body>
+</html>

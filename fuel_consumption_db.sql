@@ -1,90 +1,145 @@
--- MySQL dump 10.13  Distrib 8.0.46, for Win64 (x86_64)
---
--- Host: localhost    Database: fuel_consumption_db
--- ------------------------------------------------------
--- Server version	8.0.46
 
-/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
-/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
-/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
-/*!50503 SET NAMES utf8 */;
-/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
-/*!40103 SET TIME_ZONE='+00:00' */;
-/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
-/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
-/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
-/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+-- 1. Create the database
+CREATE DATABASE IF NOT EXISTS fuel_consumption_db;
 
---
--- Table structure for table `fuel_entries`
---
+USE fuel_consumption_db;
 
-DROP TABLE IF EXISTS `fuel_entries`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `fuel_entries` (
-  `entry_id` int NOT NULL AUTO_INCREMENT,
-  `vehicle_id` int NOT NULL,
-  `fuel_date` date NOT NULL,
-  `previous_odometer` decimal(10,2) NOT NULL,
-  `current_odometer` decimal(10,2) NOT NULL,
-  `fuel_litres` decimal(10,2) NOT NULL,
-  `price_per_litre` decimal(10,2) NOT NULL,
-  `distance` decimal(10,2) DEFAULT NULL,
-  `mileage` decimal(10,2) DEFAULT NULL,
-  `total_cost` decimal(10,2) DEFAULT NULL,
-  PRIMARY KEY (`entry_id`),
-  KEY `vehicle_id` (`vehicle_id`),
-  CONSTRAINT `fuel_entries_ibfk_1` FOREIGN KEY (`vehicle_id`) REFERENCES `vehicles` (`vehicle_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=26 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Dumping data for table `fuel_entries`
---
+-- 2. Create the vehicles table
+CREATE TABLE IF NOT EXISTS vehicles (
+    vehicle_id INT AUTO_INCREMENT PRIMARY KEY,
+    vehicle_name VARCHAR(100) NOT NULL,
+    vehicle_number VARCHAR(20) NOT NULL UNIQUE,
+    vehicle_type VARCHAR(50),
+    fuel_type VARCHAR(30),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-LOCK TABLES `fuel_entries` WRITE;
-/*!40000 ALTER TABLE `fuel_entries` DISABLE KEYS */;
-INSERT INTO `fuel_entries` VALUES (1,1,'2026-01-05',1000.00,1150.00,3.00,110.00,150.00,50.00,330.00),(2,1,'2026-02-05',1150.00,1300.00,3.20,110.00,150.00,46.88,352.00),(3,1,'2026-03-05',1300.00,1450.00,3.10,110.00,150.00,48.39,341.00),(4,1,'2026-04-05',1450.00,1600.00,3.00,112.00,150.00,50.00,336.00),(5,1,'2026-05-05',1600.00,1750.00,3.30,112.00,150.00,45.45,369.60),(6,2,'2026-01-10',5000.00,5300.00,20.00,105.00,300.00,15.00,2100.00),(7,2,'2026-02-10',5300.00,5600.00,21.00,105.00,300.00,14.29,2205.00),(8,2,'2026-03-10',5600.00,5900.00,19.00,106.00,300.00,15.79,2014.00),(9,2,'2026-04-10',5900.00,6200.00,20.00,106.00,300.00,15.00,2120.00),(10,2,'2026-05-10',6200.00,6500.00,22.00,106.00,300.00,13.64,2332.00),(11,3,'2026-01-12',2000.00,2200.00,5.00,110.00,200.00,40.00,550.00),(12,3,'2026-02-12',2200.00,2400.00,5.20,110.00,200.00,38.46,572.00),(13,3,'2026-03-12',2400.00,2600.00,4.80,111.00,200.00,41.67,532.80),(14,3,'2026-04-12',2600.00,2800.00,5.00,111.00,200.00,40.00,555.00),(15,3,'2026-05-12',2800.00,3000.00,5.10,112.00,200.00,39.22,571.20),(16,4,'2026-01-15',8000.00,8400.00,30.00,95.00,400.00,13.33,2850.00),(17,4,'2026-02-15',8400.00,8800.00,32.00,95.00,400.00,12.50,3040.00),(18,4,'2026-03-15',8800.00,9200.00,28.00,96.00,400.00,14.29,2688.00),(19,4,'2026-04-15',9200.00,9600.00,30.00,96.00,400.00,13.33,2880.00),(20,4,'2026-05-15',9600.00,10000.00,31.00,96.00,400.00,12.90,2976.00),(21,5,'2026-01-18',3000.00,3300.00,18.00,105.00,300.00,16.67,1890.00),(22,5,'2026-02-18',3300.00,3600.00,17.00,105.00,300.00,17.65,1785.00),(23,5,'2026-03-18',3600.00,3900.00,19.00,106.00,300.00,15.79,2014.00),(24,5,'2026-04-18',3900.00,4200.00,18.00,106.00,300.00,16.67,1908.00),(25,5,'2026-05-18',4200.00,4500.00,20.00,106.00,300.00,15.00,2120.00);
-/*!40000 ALTER TABLE `fuel_entries` ENABLE KEYS */;
-UNLOCK TABLES;
 
---
--- Table structure for table `vehicles`
---
+-- 3. Create the fuel entries table
+CREATE TABLE IF NOT EXISTS fuel_entries (
+    entry_id INT AUTO_INCREMENT PRIMARY KEY,
+    vehicle_id INT NOT NULL,
+    fuel_date DATE NOT NULL,
+    previous_odometer DECIMAL(10,2) NOT NULL,
+    current_odometer DECIMAL(10,2) NOT NULL,
+    fuel_litres DECIMAL(10,2) NOT NULL,
+    price_per_litre DECIMAL(10,2) NOT NULL,
+    distance DECIMAL(10,2),
+    mileage DECIMAL(10,2),
+    total_cost DECIMAL(10,2),
+    FOREIGN KEY (vehicle_id) REFERENCES vehicles(vehicle_id)
+);
 
-DROP TABLE IF EXISTS `vehicles`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `vehicles` (
-  `vehicle_id` int NOT NULL AUTO_INCREMENT,
-  `vehicle_name` varchar(100) NOT NULL,
-  `vehicle_number` varchar(20) NOT NULL,
-  `vehicle_type` varchar(50) DEFAULT NULL,
-  `fuel_type` varchar(30) DEFAULT NULL,
-  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`vehicle_id`),
-  UNIQUE KEY `vehicle_number` (`vehicle_number`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
+-- Invalid_readings table
 
---
--- Dumping data for table `vehicles`
---
+CREATE TABLE invalid_readings (
+    log_id INT AUTO_INCREMENT PRIMARY KEY,
+    vehicle_id INT NULL,
+    entered_date DATE NULL,
+    previous_odometer DECIMAL(10,2) NULL,
+    current_odometer DECIMAL(10,2) NULL,
+    fuel_litres DECIMAL(10,2) NULL,
+    reason VARCHAR(255) NOT NULL,
+    logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-LOCK TABLES `vehicles` WRITE;
-/*!40000 ALTER TABLE `vehicles` DISABLE KEYS */;
-INSERT INTO `vehicles` VALUES (1,'Honda Activa','AP03AB1001','Scooter','Petrol','2026-10-25 05:18:48'),(2,'Hyundai i20','AP03CD2002','Car','Petrol','2026-10-25 05:18:48'),(3,'Royal Enfield Classic','AP03EF3003','Bike','Petrol','2026-10-25 05:18:48'),(4,'Tata Nexon','AP03GH4004','Car','Diesel','2026-10-25 05:18:48'),(5,'Maruti Swift','AP03IJ5005','Car','Petrol','2026-10-25 05:18:48');
-/*!40000 ALTER TABLE `vehicles` ENABLE KEYS */;
-UNLOCK TABLES;
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+-- 4. Insert sample vehicles
+INSERT INTO vehicles
+(vehicle_name, vehicle_number, vehicle_type, fuel_type)
+VALUES
+('Honda Activa', 'AP03AB1001', 'Scooter', 'Petrol'),
+('Hyundai i20', 'AP03CD2002', 'Car', 'Petrol'),
+('Royal Enfield Classic', 'AP03EF3003', 'Bike', 'Petrol'),
+('Tata Nexon', 'AP03GH4004', 'Car', 'Diesel'),
+('Maruti Swift', 'AP03IJ5005', 'Car', 'Petrol');
 
-/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
-/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
-/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-10-25 11:07:15
+-- 5. Insert sample fuel entries
+INSERT INTO fuel_entries
+(vehicle_id, fuel_date, previous_odometer, current_odometer,
+ fuel_litres, price_per_litre, distance, mileage, total_cost)
+VALUES
+(1, '2026-01-05', 1000, 1150, 3, 110, 150, 50, 330),
+(1, '2026-02-05', 1150, 1300, 3.2, 110, 150, 46.88, 352),
+(1, '2026-03-05', 1300, 1450, 3.1, 110, 150, 48.39, 341),
+(1, '2026-04-05', 1450, 1600, 3, 112, 150, 50, 336),
+(1, '2026-05-05', 1600, 1750, 3.3, 112, 150, 45.45, 369.6),
+
+(2, '2026-01-10', 5000, 5300, 20, 105, 300, 15, 2100),
+(2, '2026-02-10', 5300, 5600, 21, 105, 300, 14.29, 2205),
+(2, '2026-03-10', 5600, 5900, 19, 106, 300, 15.79, 2014),
+(2, '2026-04-10', 5900, 6200, 20, 106, 300, 15, 2120),
+(2, '2026-05-10', 6200, 6500, 22, 106, 300, 13.64, 2332),
+
+(3, '2026-01-12', 2000, 2200, 5, 110, 200, 40, 550),
+(3, '2026-02-12', 2200, 2400, 5.2, 110, 200, 38.46, 572),
+(3, '2026-03-12', 2400, 2600, 4.8, 111, 200, 41.67, 532.8),
+(3, '2026-04-12', 2600, 2800, 5, 111, 200, 40, 555),
+(3, '2026-05-12', 2800, 3000, 5.1, 112, 200, 39.22, 571.2),
+
+(4, '2026-01-15', 8000, 8400, 30, 95, 400, 13.33, 2850),
+(4, '2026-02-15', 8400, 8800, 32, 95, 400, 12.5, 3040),
+(4, '2026-03-15', 8800, 9200, 28, 96, 400, 14.29, 2688),
+(4, '2026-04-15', 9200, 9600, 30, 96, 400, 13.33, 2880),
+(4, '2026-05-15', 9600, 10000, 31, 96, 400, 12.9, 2976),
+
+(5, '2026-01-18', 3000, 3300, 18, 105, 300, 16.67, 1890),
+(5, '2026-02-18', 3300, 3600, 17, 105, 300, 17.65, 1785),
+(5, '2026-03-18', 3600, 3900, 19, 106, 300, 15.79, 2014),
+(5, '2026-04-18', 3900, 4200, 18, 106, 300, 16.67, 1908),
+(5, '2026-05-18', 4200, 4500, 20, 106, 300, 15, 2120);
+
+
+-- 6. Check the vehicles
+SELECT * FROM vehicles;
+
+
+-- 7. Check the fuel entries
+SELECT * FROM fuel_entries;
+
+
+-- 8. Display fuel entries with vehicle names
+SELECT
+    vehicles.vehicle_name,
+    vehicles.vehicle_number,
+    fuel_entries.fuel_date,
+    fuel_entries.distance,
+    fuel_entries.fuel_litres,
+    fuel_entries.mileage,
+    fuel_entries.total_cost
+FROM vehicles
+JOIN fuel_entries
+ON vehicles.vehicle_id = fuel_entries.vehicle_id;
+
+
+-- 9. Total fuel expenses for each vehicle
+SELECT
+    vehicles.vehicle_name,
+    SUM(fuel_entries.total_cost) AS total_fuel_expense
+FROM vehicles
+JOIN fuel_entries
+ON vehicles.vehicle_id = fuel_entries.vehicle_id
+GROUP BY vehicles.vehicle_id, vehicles.vehicle_name;
+
+
+-- 10. Monthly fuel expenses
+SELECT
+    DATE_FORMAT(fuel_date, '%Y-%m') AS month,
+    SUM(total_cost) AS monthly_expense
+FROM fuel_entries
+GROUP BY DATE_FORMAT(fuel_date, '%Y-%m')
+ORDER BY month;
+
+
+-- 11. Average mileage for each vehicle
+SELECT
+    vehicles.vehicle_name,
+    ROUND(AVG(fuel_entries.mileage), 2) AS average_mileage
+FROM vehicles
+JOIN fuel_entries
+ON vehicles.vehicle_id = fuel_entries.vehicle_id
+GROUP BY vehicles.vehicle_id, vehicles.vehicle_name;
+
+
+

@@ -5,58 +5,61 @@ import pandas as pd
 from db_connection import get_connection
 
 
-# 1. Load fuel data from the existing MySQL database
+# ---------- LOAD DATA ----------
+
 def load_fuel_data():
+    """Load fuel records together with vehicle details."""
     connection = get_connection()
 
-    query = """
-        SELECT
-            v.vehicle_id,
-            v.vehicle_name,
-            v.vehicle_type,
-            v.fuel_type,
-            f.entry_id,
-            f.fuel_date,
-            f.previous_odometer,
-            f.current_odometer,
-            f.fuel_litres,
-            f.price_per_litre,
-            f.total_cost,
-            f.distance,
-            f.mileage
-        FROM vehicles v
-        JOIN fuel_entries f
-            ON v.vehicle_id = f.vehicle_id
-        ORDER BY v.vehicle_id, f.fuel_date, f.entry_id
-    """
-
     try:
-        return pd.read_sql_query(query, connection)
+        query = """
+            SELECT
+                f.entry_id,
+                f.vehicle_id,
+                v.vehicle_name,
+                v.vehicle_number,
+                v.vehicle_type,
+                v.fuel_type,
+                f.fuel_date,
+                f.previous_odometer,
+                f.current_odometer,
+                f.fuel_litres,
+                f.price_per_litre,
+                f.distance,
+                f.mileage,
+                f.total_cost
+            FROM fuel_entries f
+            JOIN vehicles v
+                ON f.vehicle_id = v.vehicle_id
+            ORDER BY f.fuel_date, f.entry_id
+        """
+
+        return pd.read_sql(query, connection)
+
     finally:
         connection.close()
 
 
-# 2. Clean and validate fuel data
-def clean_fuel_data(df):
-    df = df.copy()
+# ---------- CLEAN DATA ----------
+
+def clean_fuel_data(data):
+    """Convert data types and remove invalid rows for analysis."""
+    if data is None:
+        return pd.DataFrame()
+
+    df = data.copy()
 
     if df.empty:
         return df
 
-    df["fuel_date"] = pd.to_datetime(
-        df["fuel_date"], errors="coerce"
-    )
-
     numeric_columns = [
-        "vehicle_id",
-        "entry_id",
         "previous_odometer",
         "current_odometer",
         "fuel_litres",
         "price_per_litre",
-        "total_cost",
         "distance",
-        "mileage"
+        "mileage",
+        "total_cost"
     ]
 
     for column in numeric_columns:
@@ -65,359 +68,384 @@ def clean_fuel_data(df):
                 df[column], errors="coerce"
             )
 
+    if "fuel_date" in df.columns:
+        df["fuel_date"] = pd.to_datetime(
+            df["fuel_date"], errors="coerce"
+        )
+
+    # Replace infinity with missing values.
+    df = df.replace([np.inf, -np.inf], np.nan)
+
     required_columns = [
-        "vehicle_id",
-        "entry_id",
-        "vehicle_name",
-        "fuel_date",
-        "previous_odometer",
-        "current_odometer",
         "fuel_litres",
-        "price_per_litre"
+        "price_per_litre",
+        "distance",
+        "total_cost"
     ]
 
-    df = df.dropna(subset=required_columns)
+    for column in required_columns:
+        if column not in df.columns:
+            return pd.DataFrame()
 
-    # Remove invalid readings and non-finite numbers
-    for column in numeric_columns:
-        if column in df.columns:
-            df = df[
-                np.isfinite(df[column].fillna(0))
-            ].copy()
-
+    # Fuel quantity, price and distance must be positive.
     df = df[
-        (df["previous_odometer"] >= 0) &
-        (df["current_odometer"] >= df["previous_odometer"]) &
-        (df["fuel_litres"] > 0) &
-        (df["price_per_litre"] >= 0)
+        (df["fuel_litres"] > 0)
+        & (df["price_per_litre"] > 0)
+        & (df["distance"] > 0)
+        & (df["total_cost"] >= 0)
     ].copy()
 
-    # Recalculate derived values consistently
-    df["distance"] = (
-        df["current_odometer"] - df["previous_odometer"]
+    # When odometer readings are present, validate their order.
+    if (
+        "previous_odometer" in df.columns
+        and "current_odometer" in df.columns
+    ):
+        df = df[
+            df["current_odometer"] > df["previous_odometer"]
+        ].copy()
+
+    if "fuel_date" in df.columns:
+        df = df.dropna(subset=["fuel_date"])
+
+    # Recalculate mileage consistently from distance and litres.
+    df["mileage"] = df["distance"] / df["fuel_litres"]
+
+    return df.reset_index(drop=True)
+
+
+# ---------- MILEAGE ----------
+
+def calculate_mileage(data):
+    """Add a mileage column calculated from distance and litres."""
+    if data is None:
+        return pd.DataFrame()
+
+    df = data.copy()
+
+    if df.empty:
+        return df
+
+    if not {"distance", "fuel_litres"}.issubset(df.columns):
+        return df
+
+    distance = pd.to_numeric(df["distance"], errors="coerce")
+    litres = pd.to_numeric(df["fuel_litres"], errors="coerce")
+
+    valid = (
+        distance.notna()
+        & litres.notna()
+        & np.isfinite(distance)
+        & np.isfinite(litres)
+        & (distance >= 0)
+        & (litres > 0)
     )
 
-    df["total_cost"] = (
-        df["fuel_litres"] * df["price_per_litre"]
+    df["mileage"] = np.nan
+    df.loc[valid, "mileage"] = (
+        distance[valid] / litres[valid]
     )
 
-    df["mileage"] = np.where(
-        df["distance"] > 0,
-        df["distance"] / df["fuel_litres"],
+    return df
+
+
+def calculate_full_tank_mileage(data):
+    """
+    Calculate full-tank mileage only if full_tank_flag exists.
+
+    Without a full-tank indicator, return NaN because the
+    available records cannot reliably identify full-tank trips.
+    """
+    if data is None:
+        return np.nan
+
+    if "full_tank_flag" not in data.columns:
+        return np.nan
+
+    df = data.copy()
+
+    if df.empty:
+        return np.nan
+
+    full_tank = df[
+        df["full_tank_flag"].astype(str).str.lower().isin(
+            ["1", "true", "yes"]
+        )
+    ]
+
+    if full_tank.empty:
+        return np.nan
+
+    if not {"distance", "fuel_litres"}.issubset(full_tank.columns):
+        return np.nan
+
+    distance = pd.to_numeric(
+        full_tank["distance"], errors="coerce"
+    )
+    litres = pd.to_numeric(
+        full_tank["fuel_litres"], errors="coerce"
+    )
+
+    valid = (
+        distance.notna()
+        & litres.notna()
+        & (distance >= 0)
+        & (litres > 0)
+    )
+
+    if not valid.any():
+        return np.nan
+
+    return float(distance[valid].sum() / litres[valid].sum())
+
+
+# ---------- VEHICLE EXPENSE REPORT ----------
+
+def vehicle_expense_report(data):
+    """Summarise fuel cost and usage for each vehicle."""
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    required = {"vehicle_name", "total_cost", "fuel_litres"}
+    if not required.issubset(data.columns):
+        return pd.DataFrame()
+
+    df = data.copy()
+
+    if "distance" not in df.columns:
+        df["distance"] = 0
+
+    report = df.groupby("vehicle_name", as_index=False).agg(
+        total_expense=("total_cost", "sum"),
+        total_fuel_litres=("fuel_litres", "sum"),
+        total_distance=("distance", "sum")
+    )
+
+    report["cost_per_km"] = np.where(
+        report["total_distance"] > 0,
+        report["total_expense"] / report["total_distance"],
         np.nan
     )
 
-    return df.sort_values(
-        ["vehicle_id", "fuel_date", "entry_id"]
+    return report.sort_values(
+        "total_expense", ascending=False
     ).reset_index(drop=True)
 
 
-# 3. Calculate distance and approximate mileage
-def calculate_mileage(df):
-    df = df.copy()
+# ---------- MONTHLY EXPENSE REPORT ----------
 
-    df["distance_km"] = (
-        df["current_odometer"] - df["previous_odometer"]
+def monthly_expense_report(data):
+    """Summarise fuel expenses month by month."""
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    if not {"fuel_date", "total_cost"}.issubset(data.columns):
+        return pd.DataFrame()
+
+    df = data.copy()
+    df["fuel_date"] = pd.to_datetime(
+        df["fuel_date"], errors="coerce"
+    )
+    df["total_cost"] = pd.to_numeric(
+        df["total_cost"], errors="coerce"
     )
 
-    df["approx_mileage_km_per_litre"] = np.nan
+    df = df.dropna(subset=["fuel_date", "total_cost"])
 
-    valid_rows = (
-        (df["distance_km"] > 0) &
-        (df["fuel_litres"] > 0)
+    if df.empty:
+        return pd.DataFrame()
+
+    df["month"] = df["fuel_date"].dt.to_period("M").astype(str)
+
+    report = df.groupby("month", as_index=False).agg(
+        total_expense=("total_cost", "sum")
     )
 
-    df.loc[
-        valid_rows, "approx_mileage_km_per_litre"
-    ] = (
-        df.loc[valid_rows, "distance_km"] /
-        df.loc[valid_rows, "fuel_litres"]
+    return report.sort_values("month").reset_index(drop=True)
+
+
+# ---------- VEHICLE COMPARISON ----------
+
+def vehicle_comparison_report(data):
+    """Compare mileage, distance and fuel usage by vehicle."""
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    required = {"vehicle_name", "distance", "fuel_litres"}
+    if not required.issubset(data.columns):
+        return pd.DataFrame()
+
+    df = data.copy()
+
+    df["distance"] = pd.to_numeric(
+        df["distance"], errors="coerce"
+    )
+    df["fuel_litres"] = pd.to_numeric(
+        df["fuel_litres"], errors="coerce"
     )
 
-    return df
+    report = df.groupby("vehicle_name", as_index=False).agg(
+        total_distance=("distance", "sum"),
+        total_fuel_litres=("fuel_litres", "sum")
+    )
+
+    report["average_mileage"] = np.where(
+        report["total_fuel_litres"] > 0,
+        report["total_distance"] / report["total_fuel_litres"],
+        np.nan
+    )
+
+    return report.sort_values(
+        "average_mileage", ascending=False, na_position="last"
+    ).reset_index(drop=True)
 
 
-# 4. Calculate full-tank mileage when that data is available
-def calculate_full_tank_mileage(df):
-    df = df.copy()
+# ---------- PERIOD COMPARISON ----------
 
-    df["full_tank_mileage_km_per_litre"] = np.nan
+def period_comparison_report(data):
+    """Compare total fuel expense in the latest two months."""
+    monthly = monthly_expense_report(data)
 
-    # The existing database schema has no full-tank flag.
-    # Do not invent full-tank results when the flag is missing.
-    if "full_tank_flag" not in df.columns:
+    if monthly.empty:
+        return pd.DataFrame(
+            columns=["month", "total_expense", "change"]
+        )
+
+    monthly = monthly.tail(2).copy()
+    monthly["change"] = monthly["total_expense"].diff()
+
+    return monthly.reset_index(drop=True)
+
+
+# ---------- UNUSUAL CONSUMPTION ----------
+
+def detect_unusual_consumption(data, threshold=0.20):
+    """
+    Flag mileage that differs from a vehicle's average
+    by more than the selected proportion.
+
+    threshold=0.20 means a 20 percent difference.
+    """
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    if not {"vehicle_name", "mileage"}.issubset(data.columns):
+        return pd.DataFrame()
+
+    df = data.copy()
+    df["mileage"] = pd.to_numeric(
+        df["mileage"], errors="coerce"
+    )
+    df = df[
+        df["mileage"].notna()
+        & np.isfinite(df["mileage"])
+        & (df["mileage"] > 0)
+    ].copy()
+
+    if df.empty:
         return df
 
-    df = df.sort_values(
-        ["vehicle_id", "fuel_date", "entry_id"]
-    ).reset_index(drop=True)
+    average = df.groupby("vehicle_name")["mileage"].transform("mean")
 
-    for vehicle_id, group in df.groupby("vehicle_id", sort=False):
-        previous_full_tank = None
+    df["average_vehicle_mileage"] = average
+    df["percentage_difference"] = np.where(
+        average > 0,
+        (df["mileage"] - average).abs() / average,
+        np.nan
+    )
 
-        for idx in group.index:
-            is_full_tank = (
-                str(df.at[idx, "full_tank_flag"]).strip().lower()
-                in {"1", "true", "yes"}
+    unusual = df[
+        df["percentage_difference"] > threshold
+    ].copy()
+
+    return unusual.reset_index(drop=True)
+
+
+# ---------- INVALID READING REPORT ----------
+
+def invalid_readings_report(data):
+    """
+    Return invalid records with a reason.
+    Use raw, uncleaned data for this function.
+    """
+    if data is None or data.empty:
+        return pd.DataFrame()
+
+    df = data.copy()
+    reasons = pd.Series("", index=df.index, dtype="object")
+
+    checks = [
+        ("fuel_litres", lambda s: s <= 0, "Fuel litres must be positive"),
+        ("price_per_litre", lambda s: s <= 0, "Fuel price must be positive"),
+        ("distance", lambda s: s <= 0, "Distance must be positive"),
+        ("mileage", lambda s: s <= 0, "Mileage must be positive")
+    ]
+
+    for column, condition, message in checks:
+        if column in df.columns:
+            values = pd.to_numeric(df[column], errors="coerce")
+            invalid = values.isna() | condition(values)
+            reasons.loc[invalid] = reasons.loc[invalid].apply(
+                lambda old: old + (("; " if old else "") + message)
             )
 
-            if not is_full_tank:
-                continue
-
-            if previous_full_tank is not None:
-                start_odometer = df.at[
-                    previous_full_tank, "current_odometer"
-                ]
-                end_odometer = df.at[idx, "current_odometer"]
-
-                # Use positional rows between full-tank readings,
-                # not arithmetic on DataFrame index labels.
-                positions = list(group.index)
-                start_pos = positions.index(previous_full_tank)
-                end_pos = positions.index(idx)
-
-                interval_indices = positions[
-                    start_pos + 1:end_pos + 1
-                ]
-
-                fuel_used_estimate = df.loc[
-                    interval_indices, "fuel_litres"
-                ].sum()
-
-                distance = end_odometer - start_odometer
-
-                if distance > 0 and fuel_used_estimate > 0:
-                    df.at[
-                        idx, "full_tank_mileage_km_per_litre"
-                    ] = distance / fuel_used_estimate
-
-            previous_full_tank = idx
-
-    return df
-
-
-# 5. Total expenses for each vehicle
-def vehicle_expense_report(df):
-    return (
-        df.groupby(
-            ["vehicle_name", "vehicle_type", "fuel_type"],
-            dropna=False,
-            as_index=False
+    if (
+        "previous_odometer" in df.columns
+        and "current_odometer" in df.columns
+    ):
+        previous = pd.to_numeric(
+            df["previous_odometer"], errors="coerce"
         )
-        .agg(
-            total_fuel_litres=("fuel_litres", "sum"),
-            total_expense=("total_cost", "sum"),
-            total_distance_km=("distance_km", "sum")
-            if "distance_km" in df.columns
-            else ("distance", "sum")
+        current = pd.to_numeric(
+            df["current_odometer"], errors="coerce"
         )
-    )
-
-
-# 6. Monthly expenses and fuel consumption
-def monthly_expense_report(df):
-    df = df.copy()
-
-    df["month"] = (
-        pd.to_datetime(df["fuel_date"])
-        .dt.to_period("M")
-        .astype(str)
-    )
-
-    return (
-        df.groupby(
-            ["month", "vehicle_name"],
-            as_index=False
+        invalid = (
+            previous.isna() | current.isna()
+            | (current <= previous)
         )
-        .agg(
-            total_fuel_litres=("fuel_litres", "sum"),
-            total_expense=("total_cost", "sum")
+        reasons.loc[invalid] = reasons.loc[invalid].apply(
+            lambda old: old + (
+                ("; " if old else "")
+                + "Current odometer must exceed previous reading"
+            )
         )
-        .sort_values(["month", "vehicle_name"])
-        .reset_index(drop=True)
-    )
+
+    df["validation_reason"] = reasons
+    return df[df["validation_reason"] != ""].reset_index(drop=True)
 
 
-# 7. Compare vehicle performance and costs
-def vehicle_comparison_report(df):
-    df = df.copy()
+# ---------- CHART DATA ----------
 
-    if "distance_km" not in df.columns:
-        df = calculate_mileage(df)
+def prepare_chart_data(data):
+    """Prepare monthly and vehicle data for charts."""
+    df = clean_fuel_data(data)
 
-    if "approx_mileage_km_per_litre" not in df.columns:
-        df = calculate_mileage(df)
-
-    report = (
-        df.groupby(
-            ["vehicle_name", "vehicle_type", "fuel_type"],
-            dropna=False,
-            as_index=False
-        )
-        .agg(
-            total_distance_km=("distance_km", "sum"),
-            total_fuel_litres=("fuel_litres", "sum"),
-            average_approx_mileage=(
-                "approx_mileage_km_per_litre", "mean"
-            ),
-            total_expense=("total_cost", "sum")
-        )
-    )
-
-    report["overall_cost_per_km"] = (
-        report["total_expense"] /
-        report["total_distance_km"].replace(0, np.nan)
-    )
-
-    report.replace(
-        [np.inf, -np.inf], np.nan, inplace=True
-    )
-
-    return report
-
-
-# 8. Compare expenses within an inclusive date range
-def period_comparison_report(df, start_date, end_date):
-    df = df.copy()
-
-    start_date = pd.to_datetime(
-        start_date, errors="raise"
-    ).normalize()
-
-    end_date = pd.to_datetime(
-        end_date, errors="raise"
-    ).normalize()
-
-    if start_date > end_date:
-        raise ValueError(
-            "Start date must be on or before end date"
-        )
+    if df.empty:
+        return {
+            "monthly_expenses": pd.DataFrame(),
+            "monthly_fuel": pd.DataFrame(),
+            "vehicle_mileage": pd.DataFrame(),
+            "vehicle_fuel": pd.DataFrame()
+        }
 
     df["fuel_date"] = pd.to_datetime(
         df["fuel_date"], errors="coerce"
     )
-
-    # Include all times on the selected end date.
-    period_df = df[
-        (df["fuel_date"] >= start_date) &
-        (df["fuel_date"] < end_date + pd.Timedelta(days=1))
-    ]
-
-    return (
-        period_df.groupby(
-            ["vehicle_name", "vehicle_type", "fuel_type"],
-            dropna=False,
-            as_index=False
-        )
-        .agg(
-            total_fuel_litres=("fuel_litres", "sum"),
-            total_expense=("total_cost", "sum")
-        )
-    )
-
-
-# 9. Detect unusually high or low mileage
-def detect_unusual_consumption(df, threshold=0.30):
-    if not isinstance(threshold, (int, float)) or isinstance(
-        threshold, bool
-    ):
-        raise ValueError("Threshold must be a number")
-
-    if not np.isfinite(threshold) or not 0 <= threshold < 1:
-        raise ValueError("Threshold must be at least 0 and less than 1")
-
-    df = df.copy()
-
-    if "approx_mileage_km_per_litre" not in df.columns:
-        df = calculate_mileage(df)
-
-    df["unusual_consumption"] = False
-
-    for _, group in df.groupby("vehicle_id"):
-        valid = group[
-            group["approx_mileage_km_per_litre"].notna()
-        ]
-
-        # At least three readings are needed for comparison.
-        if len(valid) < 3:
-            continue
-
-        median_mileage = valid[
-            "approx_mileage_km_per_litre"
-        ].median()
-
-        if not np.isfinite(median_mileage) or median_mileage <= 0:
-            continue
-
-        lower_limit = median_mileage * (1 - threshold)
-        upper_limit = median_mileage * (1 + threshold)
-
-        unusual = (
-            (valid["approx_mileage_km_per_litre"] < lower_limit) |
-            (valid["approx_mileage_km_per_litre"] > upper_limit)
-        )
-
-        df.loc[valid.index[unusual], "unusual_consumption"] = True
-
-    return df
-
-
-# 10. Prepare data for Matplotlib charts
-def prepare_chart_data(df):
-    df = df.copy()
-
-    if "distance_km" not in df.columns:
-        df = calculate_mileage(df)
-
-    if "approx_mileage_km_per_litre" not in df.columns:
-        df = calculate_mileage(df)
+    df["month"] = df["fuel_date"].dt.to_period("M").astype(str)
 
     return {
-        "monthly_data": monthly_expense_report(df),
-        "vehicle_data": vehicle_comparison_report(df)
+        "monthly_expenses": df.groupby(
+            "month", as_index=False
+        )["total_cost"].sum(),
+
+        "monthly_fuel": df.groupby(
+            "month", as_index=False
+        )["fuel_litres"].sum(),
+
+        "vehicle_mileage": df.groupby(
+            "vehicle_name", as_index=False
+        )["mileage"].mean(),
+
+        "vehicle_fuel": df.groupby(
+            "vehicle_name", as_index=False
+        )["fuel_litres"].sum()
     }
-
-
-# 11. Run analytics directly for testing
-if __name__ == "__main__":
-    try:
-        fuel_data = load_fuel_data()
-        fuel_data = clean_fuel_data(fuel_data)
-
-        if fuel_data.empty:
-            print("No valid fuel records found.")
-        else:
-            fuel_data = calculate_mileage(fuel_data)
-            fuel_data = calculate_full_tank_mileage(fuel_data)
-            fuel_data = detect_unusual_consumption(fuel_data)
-
-            print("\n--- Fuel Records ---")
-            print(fuel_data)
-
-            print("\n--- Vehicle Expense Report ---")
-            print(vehicle_expense_report(fuel_data))
-
-            print("\n--- Monthly Expense Report ---")
-            print(monthly_expense_report(fuel_data))
-
-            print("\n--- Vehicle Comparison Report ---")
-            print(vehicle_comparison_report(fuel_data))
-
-            print("\n--- Unusual Consumption Records ---")
-            print(
-                fuel_data[
-                    fuel_data["unusual_consumption"]
-                ]
-            )
-
-            chart_data = prepare_chart_data(fuel_data)
-
-            print("\n--- Chart Data Prepared ---")
-            print("Monthly data:")
-            print(chart_data["monthly_data"])
-
-            print("\nVehicle data:")
-            print(chart_data["vehicle_data"])
-
-    except Exception as error:
-        print("Analytics error:", error)

@@ -1,11 +1,20 @@
 
-# Calculate mileage in kilometres per litre
-def calculate_mileage(distance, fuel_used):
-    if not isinstance(distance, (int, float)) or isinstance(distance, bool):
-        raise ValueError("Distance must be a number")
+import math
 
-    if not isinstance(fuel_used, (int, float)) or isinstance(fuel_used, bool):
-        raise ValueError("Fuel used must be a number")
+
+def check_number(value, name):
+    """Check that a value is a real, finite number."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(name + " must be a number")
+
+    if not math.isfinite(value):
+        raise ValueError(name + " must be a finite number")
+
+
+def calculate_mileage(distance, fuel_used):
+    """Calculate kilometres travelled per litre."""
+    check_number(distance, "Distance")
+    check_number(fuel_used, "Fuel used")
 
     if distance < 0:
         raise ValueError("Distance cannot be negative")
@@ -16,30 +25,24 @@ def calculate_mileage(distance, fuel_used):
     return distance / fuel_used
 
 
-# Calculate total fuel cost
 def calculate_fuel_cost(fuel_used, price_per_litre):
-    if not isinstance(fuel_used, (int, float)) or isinstance(fuel_used, bool):
-        raise ValueError("Fuel used must be a number")
+    """Calculate total fuel expense."""
+    check_number(fuel_used, "Fuel used")
+    check_number(price_per_litre, "Price per litre")
 
-    if not isinstance(price_per_litre, (int, float)) or isinstance(price_per_litre, bool):
-        raise ValueError("Price must be a number")
+    if fuel_used <= 0:
+        raise ValueError("Fuel used must be greater than zero")
 
-    if fuel_used < 0:
-        raise ValueError("Fuel used cannot be negative")
-
-    if price_per_litre < 0:
-        raise ValueError("Price cannot be negative")
+    if price_per_litre <= 0:
+        raise ValueError("Price per litre must be greater than zero")
 
     return fuel_used * price_per_litre
 
 
-# Calculate fuel required for a journey
 def calculate_total_fuel(distance, mileage):
-    if not isinstance(distance, (int, float)) or isinstance(distance, bool):
-        raise ValueError("Distance must be a number")
-
-    if not isinstance(mileage, (int, float)) or isinstance(mileage, bool):
-        raise ValueError("Mileage must be a number")
+    """Calculate fuel required for a given distance."""
+    check_number(distance, "Distance")
+    check_number(mileage, "Mileage")
 
     if distance < 0:
         raise ValueError("Distance cannot be negative")
