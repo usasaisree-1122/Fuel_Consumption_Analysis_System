@@ -1,45 +1,112 @@
-# Fuel Consumption Analysis System
+# ⛽ Fuel Consumption Analysis System
 
-## Project Objective
-To record and analyze vehicle fuel consumption, calculate mileage and fuel expenses, compare vehicle performance, and present useful insights through graphs and reports.
+A web-based application to manage vehicle fuel records, analyse fuel consumption, calculate mileage, and monitor fuel expenses through an interactive dashboard.
 
-## Technologies Used
-- Python
-- Flask
-- MySQL
-- Pandas
-- NumPy
-- Matplotlib
-- HTML and CSS
+## ✨ Features
 
-## Main Features
-- Add and manage vehicle details.
-- Record fuel entries and odometer readings.
-- Calculate distance travelled and vehicle mileage.
-- Calculate total fuel expenses and cost per kilometre.
-- Compare mileage across vehicles.
-- Analyze monthly fuel consumption and expenses.
-- Display charts and reports for better data visualization.
-- Maintain an Invalid Readings Log for rejected fuel-entry submissions.
+- User registration and secure login.
+- Role-based access for Fleet Managers, Individual Owners, and Staff.
+- Vehicle management and staff assignments.
+- Fuel entry management with mileage and cost calculations.
+- Invalid fuel and odometer reading detection.
+- Interactive dashboard with data visualisations.
+- PDF and Excel report generation.
+- Restricted access to assigned vehicle records.
 
-## Project Files
-- `app.py` – Main Flask application and routes.
-- `db_connection.py` – MySQL database connection.
-- `calculations.py` – Fuel and mileage calculation functions.
-- `analytics.py` – Fuel consumption data analysis.
-- `visualizations.py` – Generates charts and graphs.
-- `templates/` – HTML pages for the application.
-- `static/images/` – Generated charts and visualizations.
-- `test_calculations.py` – Basic calculation tests.
-- `README.md` – Project documentation.
+## 🛠️ Technologies Used
 
-## How to Run
-1. Open the project in PyCharm.
-2. Install the required Python libraries.
-3. Configure the MySQL database and connection settings.
-4. Ensure the required database and tables are created.
-5. Run `app.py`.
-6. Open the local URL displayed in the terminal in your browser.
+- **Backend:** Python, Flask
+- **Database:** MySQL
+- **Frontend:** HTML, CSS, JavaScript
+- **Data Analysis:** Pandas
+- **Visualisation:** Matplotlib
+- **Reports:** ReportLab, OpenPyXL
 
-## Expected Result
-The system helps users monitor vehicle mileage, understand fuel expenses, compare vehicle performance, analyze monthly fuel consumption, and identify invalid fuel-entry attempts through reports and visualizations.
+## 📂 Project Structure
+
+```text
+Fuel_Consumption_Analysis_System/
+│
+├── app.py
+├── analytics.py
+├── calculations.py
+├── visualizations.py
+├── db_connection.py
+├── fuel_consumption_db.sql
+│
+├── templates/
+│   ├── base.html
+│   ├── login.html
+│   ├── register.html
+│   ├── dashboard.html
+│   ├── staff.html
+│   ├── vehicles.html
+│   ├── fuel_entries.html
+│   ├── invalid_readings.html
+│   └── reports.html
+│
+├── static/
+│   └── images/
+│
+└── README.md
+```
+
+## ⚙️ Installation & Setup
+
+**1. Clone the repository**
+
+```bash
+git clone https://github.com/usasaisree-1122/Fuel_Consumption_Analysis_System.git
+```
+
+**2. Navigate to the project folder**
+
+```bash
+cd Fuel_Consumption_Analysis_System
+```
+
+**3. Install dependencies**
+
+```bash
+pip install flask mysql-connector-python pandas matplotlib reportlab openpyxl
+```
+
+**4. Configure the database**
+
+- Start your MySQL server.
+- Import `fuel_consumption_db.sql`.
+- Configure your database credentials in `db_connection.py`.
+
+**5. Run the application**
+
+```bash
+python app.py
+```
+
+Open your browser and visit:
+
+`http://127.0.0.1:5000/`
+
+## 👥 User Roles
+
+| Role | Access |
+|---|---|
+| Fleet Manager | Manage all vehicles, staff, fuel records and reports |
+| Individual Owner | Manage own vehicles and fuel records |
+| Staff | Access assigned vehicles and their fuel records |
+
+## 🎯 Objective
+
+To provide an efficient system for tracking vehicle fuel consumption, analysing mileage, monitoring expenses, identifying invalid readings, and improving fleet management.
+
+## 👨‍💻 Author
+
+**Usa Sai Sree**
+
+GitHub: [@usasaisree-1122](https://github.com/usasaisree-1122)
+
+---
+
+⭐ If you find this project useful, consider giving the repository a star!
+
+**Fuel Consumption Analysis System — Smarter Fuel Tracking, Better Fleet Management.**
