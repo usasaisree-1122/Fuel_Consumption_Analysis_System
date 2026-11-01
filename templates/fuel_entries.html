@@ -1,148 +1,300 @@
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fuel Entries</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 25px; background: #f4f7fb; color: #222; }
-        h1, h2 { color: #183b65; }
-        .card { background: white; padding: 20px; border-radius: 10px; margin-bottom: 22px; box-shadow: 0 2px 8px #ddd; }
-        form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
-        label { display: block; font-weight: bold; margin-bottom: 6px; }
-        input, select, button { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
-        button { background: #1769aa; color: white; border: 0; cursor: pointer; font-weight: bold; }
-        button:hover { background: #104b7b; }
-        table { width: 100%; border-collapse: collapse; background: white; }
-        th, td { padding: 10px; border: 1px solid #ddd; text-align: left; white-space: nowrap; }
-        th { background: #183b65; color: white; }
-        .message { padding: 12px; margin: 8px 0; border-radius: 5px; }
-        .error { background: #ffe5e5; color: #9b111e; }
-        .success { background: #e0f6e7; color: #146c35; }
-        .links a { margin-right: 15px; }
-        .table-wrap { overflow-x: auto; }
-        .hint { font-size: 13px; color: #555; }
-    </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block content %}
 
-    <h1>Fuel Entry Management</h1>
+<h2>Fuel Entries</h2>
 
-    <div class="links">
-        <a href="/">Dashboard</a>
-        <a href="/vehicles">Vehicles</a>
-        <a href="/reports">Reports</a>
-    </div>
+<!-- ADD FUEL ENTRY -->
+<div class="card">
+    <h3>Add Fuel Entry</h3>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for category, message in messages %}
-            <div class="message {{ category }}">{{ message }}</div>
-        {% endfor %}
-    {% endwith %}
+    {% if vehicles %}
+    <form method="post" class="grid">
 
-    <div class="card">
-        <h2>Add Fuel Entry</h2>
-        <p class="hint">Current odometer must be greater than previous odometer. Future dates and zero or negative fuel quantities/prices are not accepted.</p>
-
-        {% if vehicles %}
-        <form method="POST" action="{{ url_for('fuel_entries') }}">
-            <div>
-                <label for="vehicle_id">Vehicle</label>
-                <select id="vehicle_id" name="vehicle_id" required>
-                    <option value="">Select vehicle</option>
-                    {% for vehicle in vehicles %}
-                    <option value="{{ vehicle.vehicle_id }}">
-                        {{ vehicle.vehicle_name }} — {{ vehicle.vehicle_number }}
-                    </option>
-                    {% endfor %}
-                </select>
-            </div>
-
-            <div>
-                <label for="fuel_date">Fuel Date</label>
-                <input type="date" id="fuel_date" name="fuel_date"
-                       max="{{ now_date if now_date is defined else '' }}" required>
-            </div>
-
-            <div>
-                <label for="previous_odometer">Previous Odometer (km)</label>
-                <input type="number" id="previous_odometer" name="previous_odometer"
-                       min="0" step="0.01" placeholder="e.g. 12000" required>
-            </div>
-
-            <div>
-                <label for="current_odometer">Current Odometer (km)</label>
-                <input type="number" id="current_odometer" name="current_odometer"
-                       min="0.01" step="0.01" placeholder="e.g. 12300" required>
-            </div>
-
-            <div>
-                <label for="fuel_litres">Fuel Quantity (litres)</label>
-                <input type="number" id="fuel_litres" name="fuel_litres"
-                       min="0.01" step="0.01" placeholder="e.g. 20" required>
-            </div>
-
-            <div>
-                <label for="price_per_litre">Price per Litre (₹)</label>
-                <input type="number" id="price_per_litre" name="price_per_litre"
-                       min="0.01" step="0.01" placeholder="e.g. 105.50" required>
-            </div>
-
-            <div style="align-self:end">
-                <button type="submit">Save Fuel Entry</button>
-            </div>
-        </form>
-        {% else %}
-            <p>Please add a vehicle before recording fuel entries.</p>
-            <a href="/vehicles">Add a vehicle</a>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2>Fuel Entry Records</h2>
-
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Entry ID</th>
-                        <th>Vehicle</th>
-                        <th>Registration</th>
-                        <th>Date</th>
-                        <th>Previous Odometer</th>
-                        <th>Current Odometer</th>
-                        <th>Distance (km)</th>
-                        <th>Fuel (L)</th>
-                        <th>Price/L (₹)</th>
-                        <th>Mileage (km/L)</th>
-                        <th>Total Cost (₹)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for entry in entries %}
-                    <tr>
-                        <td>{{ entry.entry_id }}</td>
-                        <td>{{ entry.vehicle_name }}</td>
-                        <td>{{ entry.vehicle_number }}</td>
-                        <td>{{ entry.fuel_date }}</td>
-                        <td>{{ "%.2f"|format(entry.previous_odometer|float) }}</td>
-                        <td>{{ "%.2f"|format(entry.current_odometer|float) }}</td>
-                        <td>{{ "%.2f"|format(entry.distance|float) }}</td>
-                        <td>{{ "%.2f"|format(entry.fuel_litres|float) }}</td>
-                        <td>{{ "%.2f"|format(entry.price_per_litre|float) }}</td>
-                        <td>{{ "%.2f"|format(entry.mileage|float) }}</td>
-                        <td>₹{{ "%.2f"|format(entry.total_cost|float) }}</td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="11">No fuel entries available yet.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div>
+            <label>Vehicle</label>
+            <select name="vehicle_id" required>
+                {% for v in vehicles %}
+                <option value="{{ v.vehicle_id }}">
+                    {{ v.vehicle_name }} - {{ v.vehicle_number }}
+                </option>
+                {% endfor %}
+            </select>
         </div>
-    </div>
 
-</body>
-</html>
+        <div>
+            <label>Date</label>
+            <input type="date" name="fuel_date"
+                   max="{{ now_date }}" required>
+        </div>
+
+        <div>
+            <label>Previous Odometer</label>
+            <input type="number" step="0.01" min="0"
+                   name="previous_odometer" required>
+        </div>
+
+        <div>
+            <label>Current Odometer</label>
+            <input type="number" step="0.01" min="0"
+                   name="current_odometer" required>
+        </div>
+
+        <div>
+            <label>Fuel (litres)</label>
+            <input type="number" step="0.01" min="0.01"
+                   name="fuel_litres" required>
+        </div>
+
+        <div>
+            <label>Price per litre</label>
+            <input type="number" step="0.01" min="0.01"
+                   name="price_per_litre" required>
+        </div>
+
+        <div>
+            <label>
+                <input type="checkbox" name="full_tank_flag"
+                       checked style="width:auto">
+                Full tank
+            </label>
+        </div>
+
+        <div>
+            <button type="submit">Save Entry</button>
+        </div>
+
+    </form>
+    {% else %}
+        Add a vehicle first.
+    {% endif %}
+</div>
+
+
+<!-- SAVED FUEL ENTRIES -->
+<div class="card">
+    <h3>Saved Entries</h3>
+
+    <div class="table-wrap">
+        <table>
+            <tr>
+                <th>ID</th>
+                <th>Vehicle</th>
+                <th>Date</th>
+                <th>Distance</th>
+                <th>Litres</th>
+                <th>Price/L</th>
+                <th>Mileage</th>
+                <th>Cost</th>
+                <th>Full Tank</th>
+                <th>Actions</th>
+            </tr>
+
+            {% for e in entries %}
+            <tr>
+                <td>{{ e.entry_id }}</td>
+                <td>{{ e.vehicle_name }}</td>
+                <td>{{ e.fuel_date }}</td>
+                <td>{{ e.distance }}</td>
+                <td>{{ e.fuel_litres }}</td>
+                <td>{{ e.price_per_litre }}</td>
+                <td>{{ e.mileage }}</td>
+                <td>{{ e.total_cost }}</td>
+                <td>{{ 'Yes' if e.full_tank_flag else 'No' }}</td>
+
+                <td>
+                    {% if logged_role != 'staff' or e.created_by == session.get('user_id') %}
+
+                    <button type="button"
+                            onclick="editEntry({{ e.entry_id }})">
+                        Edit
+                    </button>
+
+                    <button type="button"
+                            onclick="deleteEntry({{ e.entry_id }})">
+                        Delete
+                    </button>
+
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+            </tr>
+
+            {% else %}
+            <tr>
+                <td colspan="10">No records found.</td>
+            </tr>
+            {% endfor %}
+
+        </table>
+    </div>
+</div>
+
+
+<script>
+
+// Convert database date into YYYY-MM-DD format
+function normalizeDate(value) {
+
+    if (!value) return "";
+
+    const date = new Date(value);
+
+    if (isNaN(date.getTime())) {
+        return "";
+    }
+
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+}
+
+
+// DELETE FUEL ENTRY
+async function deleteEntry(entryId) {
+
+    if (!confirm("Are you sure you want to delete this fuel entry?")) {
+        return;
+    }
+
+    try {
+
+        const response = await fetch(`/api/fuel-entries/${entryId}`, {
+            method: "DELETE"
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+
+            alert("Fuel entry deleted successfully.");
+            location.reload();
+
+        } else {
+
+            alert(result.error || "Could not delete entry.");
+        }
+
+    } catch (error) {
+
+        alert("Something went wrong. Please try again.");
+    }
+}
+
+
+// EDIT FUEL ENTRY
+async function editEntry(entryId) {
+
+    try {
+
+        const response = await fetch(`/api/fuel-entries/${entryId}`);
+        const result = await response.json();
+
+        if (!response.ok || !result.success) {
+
+            alert(result.error || "Could not load entry.");
+            return;
+        }
+
+        const e = result.data;
+
+        // Correct date format
+        const defaultDate = normalizeDate(e.fuel_date);
+
+        const fuelDate = prompt(
+            "Fuel date (YYYY-MM-DD):",
+            defaultDate
+        );
+
+        if (fuelDate === null) return;
+
+        // Validate date format
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fuelDate)) {
+            alert("Please enter the date in YYYY-MM-DD format.");
+            return;
+        }
+
+        const previous = prompt(
+            "Previous odometer:",
+            e.previous_odometer
+        );
+
+        if (previous === null) return;
+
+        const current = prompt(
+            "Current odometer:",
+            e.current_odometer
+        );
+
+        if (current === null) return;
+
+        const litres = prompt(
+            "Fuel litres:",
+            e.fuel_litres
+        );
+
+        if (litres === null) return;
+
+        const price = prompt(
+            "Price per litre:",
+            e.price_per_litre
+        );
+
+        if (price === null) return;
+
+        const fullTank = confirm(
+            "Was the tank filled completely?\n\nOK = Yes\nCancel = No"
+        );
+
+        const updateResponse = await fetch(
+            `/api/fuel-entries/${entryId}`,
+            {
+                method: "PUT",
+
+                headers: {
+                    "Content-Type": "application/json"
+                },
+
+                body: JSON.stringify({
+
+                    fuel_date: fuelDate,
+
+                    previous_odometer: previous,
+
+                    current_odometer: current,
+
+                    fuel_litres: litres,
+
+                    price_per_litre: price,
+
+                    full_tank_flag: fullTank
+                })
+            }
+        );
+
+        const updateResult = await updateResponse.json();
+
+        if (updateResponse.ok && updateResult.success) {
+
+            alert("Fuel entry updated successfully.");
+            location.reload();
+
+        } else {
+
+            alert(
+                updateResult.error || "Could not update entry."
+            );
+        }
+
+    } catch (error) {
+
+        alert("Something went wrong. Please try again.");
+    }
+}
+
+</script>
+
+{% endblock %}

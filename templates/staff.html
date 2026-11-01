@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}<h2>Staff Management</h2><div class="card"><h3>Create Staff Account</h3>
+<form method="post"><label>Name</label><input name="name" required><label>Email</label><input type="email" name="email" required>
+<label>Temporary Password</label><input type="password" name="password" minlength="6" required>
+<label>Assign Vehicles</label>{% for v in vehicles %}<label><input type="checkbox" name="vehicle_ids" value="{{v.vehicle_id}}" style="width:auto">{{v.vehicle_name}} - {{v.vehicle_number}}</label>{% endfor %}
+<button>Create Staff</button></form></div><div class="card"><h3>Staff Accounts</h3>{% for s in staff_members %}<p>{{s.name}} — {{s.email}}</p>{% else %}<p>No staff accounts.</p>{% endfor %}</div>{% endblock %}

@@ -1,43 +1,31 @@
+import os
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from functools import wraps
+from io import BytesIO
 
-from flask import Flask, render_template, request, redirect, url_for, flash
+import pandas as pd
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_file
+from werkzeug.security import generate_password_hash, check_password_hash
 from mysql.connector import Error
 
 from db_connection import get_connection
-
-from analytics import (
-    load_fuel_data,
-    clean_fuel_data,
-    vehicle_expense_report,
-    monthly_expense_report,
-    vehicle_comparison_report,
-    period_comparison_report,
-)
-
-from calculations import (
-    calculate_mileage,
-    calculate_fuel_cost,
-    calculate_total_fuel
-)
-
+from calculations import calculate_mileage, calculate_fuel_cost
+from analytics import (load_fuel_data, clean_fuel_data, vehicle_expense_report,
+                      monthly_expense_report, vehicle_comparison_report,
+                      period_comparison_report)
 
 app = Flask(__name__)
-app.secret_key = "fuel-project-secret-key"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "change-this-secret-key")
 
-VEHICLE_TYPES = ["Car", "Bike", "Truck", "Bus", "Van", "Other"]
+VEHICLE_TYPES = ["Car", "Bike", "Truck", "Bus", "Van", "Scooter", "Other"]
 FUEL_TYPES = ["Petrol", "Diesel", "CNG", "Electric", "Other"]
 
-
-# =========================================================
-# DATABASE HELPERS
-# =========================================================
 
 def fetch_all(sql, params=()):
     connection = get_connection()
     cursor = connection.cursor(dictionary=True)
-
     try:
         cursor.execute(sql, params)
         return cursor.fetchall()
@@ -49,7 +37,6 @@ def fetch_all(sql, params=()):
 def fetch_one(sql, params=()):
     connection = get_connection()
     cursor = connection.cursor(dictionary=True)
-
     try:
         cursor.execute(sql, params)
         return cursor.fetchone()
@@ -61,7 +48,6 @@ def fetch_one(sql, params=()):
 def execute_sql(sql, params=()):
     connection = get_connection()
     cursor = connection.cursor()
-
     try:
         cursor.execute(sql, params)
         connection.commit()
@@ -74,771 +60,618 @@ def execute_sql(sql, params=()):
         connection.close()
 
 
-# =========================================================
-# INVALID READING LOG
-# =========================================================
-
-def safe_decimal(value):
-    """Convert a submitted value to Decimal, or return None."""
-    try:
-        if value is None or str(value).strip() == "":
-            return None
-
-        number = Decimal(str(value).strip())
-
-        if not number.is_finite():
-            return None
-
-        return number
-
-    except (InvalidOperation, ValueError, TypeError):
-        return None
+def login_required(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return function(*args, **kwargs)
+    return wrapper
 
 
-def safe_date(value):
-    """Convert a submitted date to a date object, or return None."""
-    try:
-        return datetime.strptime(value or "", "%Y-%m-%d").date()
-    except (ValueError, TypeError):
-        return None
+def roles_required(*roles):
+    def decorator(function):
+        @wraps(function)
+        def wrapper(*args, **kwargs):
+            if "user_id" not in session:
+                return redirect(url_for("login"))
+            if session.get("role") not in roles:
+                flash("You do not have permission to perform this action.", "error")
+                return redirect(url_for("dashboard"))
+            return function(*args, **kwargs)
+        return wrapper
+    return decorator
+
+
+def current_user():
+    return fetch_one("SELECT user_id, full_name, email, role FROM users WHERE user_id=%s",
+                     (session["user_id"],))
+
+
+def visible_vehicle_condition():
+    role = session.get("role")
+    user_id = session.get("user_id")
+    if role == "fleet_manager":
+        return "", ()
+    if role == "individual_owner":
+        return " WHERE v.owner_id=%s", (user_id,)
+    if role == "staff":
+        return (
+            " JOIN staff_assignments sa ON sa.vehicle_id=v.vehicle_id "
+            " WHERE sa.staff_user_id=%s",
+            (user_id,)
+        )
+    return " WHERE 1=0", ()
+
+
+def get_visible_vehicles():
+    extra, params = visible_vehicle_condition()
+    return fetch_all(
+        "SELECT v.vehicle_id, v.vehicle_name, v.vehicle_number, v.vehicle_type, "
+        "v.fuel_type, v.created_at FROM vehicles v" + extra +
+        " ORDER BY v.vehicle_id DESC", params)
+
+
+
+def can_access_vehicle(vehicle_id):
+    role = session.get("role")
+    user_id = session.get("user_id")
+
+    if role == "fleet_manager":
+        return fetch_one(
+            "SELECT vehicle_id FROM vehicles WHERE vehicle_id=%s",
+            (vehicle_id,)
+        ) is not None
+
+    if role == "individual_owner":
+        return fetch_one(
+            "SELECT vehicle_id FROM vehicles WHERE vehicle_id=%s AND owner_id=%s",
+            (vehicle_id, user_id)
+        ) is not None
+
+    if role == "staff":
+        return fetch_one("""
+            SELECT vehicle_id FROM staff_assignments
+            WHERE vehicle_id=%s AND staff_user_id=%s
+        """, (vehicle_id, user_id)) is not None
+
+    return False
 
 
 def log_invalid_reading(vehicle_id, reason):
-    """
-    Save a rejected fuel submission in invalid_readings.
-    Invalid submissions are never inserted into fuel_entries.
-    """
     form = request.form
-
+    def number(name):
+        try:
+            return Decimal(form.get(name, "").strip())
+        except (InvalidOperation, ValueError, TypeError):
+            return None
     try:
-        submitted_vehicle_id = vehicle_id
-
-        if submitted_vehicle_id is None:
-            try:
-                submitted_vehicle_id = int(form.get("vehicle_id", ""))
-            except (ValueError, TypeError):
-                submitted_vehicle_id = None
-
         execute_sql(
-            """
-            INSERT INTO invalid_readings
-                (vehicle_id, entered_date, previous_odometer,
-                 current_odometer, fuel_litres, reason)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                submitted_vehicle_id,
-                safe_date(form.get("fuel_date")),
-                safe_decimal(form.get("previous_odometer")),
-                safe_decimal(form.get("current_odometer")),
-                safe_decimal(form.get("fuel_litres")),
-                str(reason)[:255]
-            )
-        )
-
+            """INSERT INTO invalid_readings
+               (vehicle_id, entered_date, previous_odometer, current_odometer,
+                fuel_litres, reason) VALUES (%s,%s,%s,%s,%s,%s)""",
+            (vehicle_id, form.get("fuel_date") or None, number("previous_odometer"),
+             number("current_odometer"), number("fuel_litres"), str(reason)[:255]))
     except Exception:
-        # Keep the original validation error visible even if logging fails.
-        app.logger.exception("Could not save invalid-reading log")
+        app.logger.exception("Could not save invalid reading")
 
 
-# =========================================================
-# INPUT VALIDATION
-# =========================================================
-
-def validate_vehicle_name(value):
-    value = (value or "").strip()
-
-    if len(value) < 2:
-        return False, "Vehicle name must contain at least 2 characters."
-
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ._-]*", value):
-        return False, (
-            "Vehicle name must start with a letter and contain "
-            "only valid characters."
-        )
-
-    return True, value
-
-
-def validate_vehicle_number(value):
-    value = re.sub(r"\s+", "", (value or "").upper())
-
-    pattern = r"[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{1,4}"
-
-    if not re.fullmatch(pattern, value):
-        return False, "Enter a valid registration number, e.g. AP03AB1234."
-
-    return True, value
-
-
-def validate_positive_number(value, field_name, allow_zero=False):
+def positive_decimal(value, label, allow_zero=False):
     try:
         number = Decimal(str(value).strip())
     except (InvalidOperation, ValueError, TypeError):
-        return False, f"{field_name} must be a valid number."
-
-    if not number.is_finite():
-        return False, f"{field_name} must be finite."
-
-    if number < 0:
-        return False, f"{field_name} cannot be negative."
-
-    if number == 0 and not allow_zero:
-        return False, f"{field_name} must be greater than zero."
-
-    return True, number
+        raise ValueError(label + " must be a valid number.")
+    if not number.is_finite() or number < 0 or (number == 0 and not allow_zero):
+        raise ValueError(label + " must be " + ("zero or positive." if allow_zero else "greater than zero."))
+    return number
 
 
-def validate_fuel_date(value):
-    try:
-        parsed_date = datetime.strptime(value or "", "%Y-%m-%d").date()
-    except ValueError:
-        return False, "Enter a valid fuel date."
-
-    if parsed_date > date.today():
-        return False, "Fuel date cannot be in the future."
-
-    return True, parsed_date
+@app.context_processor
+def inject_user():
+    return {"logged_user": session.get("name"), "logged_role": session.get("role")}
 
 
-# =========================================================
-# DASHBOARD
-# =========================================================
-
-@app.route("/")
-def dashboard():
-    try:
-        summary = fetch_one("""
-            SELECT
-                (SELECT COUNT(*) FROM vehicles) AS total_vehicles,
-                (SELECT COUNT(*) FROM fuel_entries) AS total_entries,
-                (SELECT COALESCE(SUM(fuel_litres), 0)
-                 FROM fuel_entries) AS total_fuel,
-                (SELECT COALESCE(SUM(total_cost), 0)
-                 FROM fuel_entries) AS total_cost,
-                (SELECT COALESCE(AVG(mileage), 0)
-                 FROM fuel_entries
-                 WHERE mileage > 0) AS avg_mileage
-        """)
-
-        recent_entries = fetch_all("""
-            SELECT f.entry_id, v.vehicle_name, v.vehicle_number,
-                   f.fuel_date, f.distance, f.fuel_litres,
-                   f.mileage, f.total_cost
-            FROM fuel_entries f
-            JOIN vehicles v ON f.vehicle_id = v.vehicle_id
-            ORDER BY f.fuel_date DESC, f.entry_id DESC
-            LIMIT 10
-        """)
-
-        chart_images = [
-            "mileage_comparison.png",
-            "monthly_expenses.png",
-            "fuel_consumption.png",
-            "cost_per_kilometre.png",
-            "monthly_consumption.png",
-            "vehicle_performance.png"
-        ]
-
-        try:
-            import visualizations
-
-            if hasattr(visualizations, "generate_all_charts"):
-                visualizations.generate_all_charts()
-        except Exception:
-            app.logger.exception("Chart generation failed")
-
-        summary = summary or {}
-
-        return render_template(
-            "dashboard.html",
-            summary=summary,
-            total_vehicles=summary.get("total_vehicles", 0),
-            total_entries=summary.get("total_entries", 0),
-            total_fuel=summary.get("total_fuel", 0),
-            total_cost=summary.get("total_cost", 0),
-            avg_mileage=summary.get("avg_mileage", 0),
-            recent_entries=recent_entries,
-            chart_images=chart_images
-        )
-
-    except Error:
-        app.logger.exception("Dashboard database error")
-        flash("Unable to load dashboard. Check your database connection.", "error")
-
-        return render_template(
-            "dashboard.html",
-            summary={},
-            total_vehicles=0,
-            total_entries=0,
-            total_fuel=0,
-            total_cost=0,
-            avg_mileage=0,
-            recent_entries=[],
-            chart_images=[]
-        )
-
-
-# =========================================================
-# VEHICLE MANAGEMENT
-# =========================================================
-
-@app.route("/vehicles", methods=["GET", "POST"])
-def vehicles():
+@app.route("/register", methods=["GET", "POST"])
+def register():
     if request.method == "POST":
-        valid, vehicle_name = validate_vehicle_name(
-            request.form.get("vehicle_name")
-        )
-
-        if not valid:
-            flash(vehicle_name, "error")
-            return redirect(url_for("vehicles"))
-
-        valid, vehicle_number = validate_vehicle_number(
-            request.form.get("vehicle_number")
-        )
-
-        if not valid:
-            flash(vehicle_number, "error")
-            return redirect(url_for("vehicles"))
-
-        vehicle_type = request.form.get("vehicle_type", "").strip()
-        fuel_type = request.form.get("fuel_type", "").strip()
-
-        if vehicle_type not in VEHICLE_TYPES:
-            flash("Select a valid vehicle type.", "error")
-            return redirect(url_for("vehicles"))
-
-        if fuel_type not in FUEL_TYPES:
-            flash("Select a valid fuel type.", "error")
-            return redirect(url_for("vehicles"))
-
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        role = request.form.get("role", "individual_owner")
+        if not name or not email or len(password) < 6:
+            flash("Enter your name, a valid email and a password of at least 6 characters.", "error")
+            return redirect(url_for("register"))
+        if role not in ("individual_owner", "fleet_manager"):
+            flash("Invalid account type.", "error")
+            return redirect(url_for("register"))
         try:
-            execute_sql("""
-                INSERT INTO vehicles
-                    (vehicle_name, vehicle_number,
-                     vehicle_type, fuel_type)
-                VALUES (%s, %s, %s, %s)
-            """, (
-                vehicle_name,
-                vehicle_number,
-                vehicle_type,
-                fuel_type
-            ))
-
-            flash("Vehicle added successfully!", "success")
-
+            execute_sql(
+                "INSERT INTO users (full_name,email,password_hash,role) VALUES (%s,%s,%s,%s)",
+                (name, email, generate_password_hash(password), role))
+            flash("Account created. Please log in.", "success")
+            return redirect(url_for("login"))
         except Error as error:
             if getattr(error, "errno", None) == 1062:
-                flash("This registration number already exists.", "error")
+                flash("This email is already registered.", "error")
             else:
-                app.logger.exception("Vehicle insertion failed")
-                flash("Could not save the vehicle. Check the database.", "error")
+                app.logger.exception("Registration failed")
+                flash("Could not create account.", "error")
+    return render_template("register.html")
 
-        return redirect(url_for("vehicles"))
 
-    try:
-        vehicle_list = fetch_all("""
-            SELECT vehicle_id, vehicle_name, vehicle_number,
-                   vehicle_type, fuel_type, created_at
-            FROM vehicles
-            ORDER BY vehicle_id DESC
-        """)
-    except Error:
-        app.logger.exception("Could not load vehicles")
-        vehicle_list = []
-        flash("Could not load vehicle records.", "error")
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = fetch_one("SELECT * FROM users WHERE email=%s", (email,))
+        if user and check_password_hash(user["password_hash"], password):
+            session.clear()
+            session["user_id"] = user["user_id"]
+            session["name"] = user["full_name"]
+            session["role"] = user["role"]
+            return redirect(url_for("dashboard"))
+        flash("Incorrect email or password.", "error")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+
+@app.route("/")
+@login_required
+def dashboard():
+
+    # Get vehicles accessible to the logged-in user
+    vehicles = get_visible_vehicles()
+    vehicle_ids = [v["vehicle_id"] for v in vehicles]
+
+    vehicle_count = len(vehicle_ids)
+
+    if vehicle_ids:
+
+        marks = ",".join(["%s"] * len(vehicle_ids))
+        params = tuple(vehicle_ids)
+
+        # Total fuel entries
+        entry_count = fetch_one(
+            f"SELECT COUNT(*) AS n FROM fuel_entries "
+            f"WHERE vehicle_id IN ({marks})",
+            params
+        )["n"]
+
+        # Total fuel consumed
+        total_fuel = fetch_one(
+            f"SELECT COALESCE(SUM(fuel_litres), 0) AS n "
+            f"FROM fuel_entries WHERE vehicle_id IN ({marks})",
+            params
+        )["n"]
+
+        # Total fuel expenditure
+        total_cost = fetch_one(
+            f"SELECT COALESCE(SUM(total_cost), 0) AS n "
+            f"FROM fuel_entries WHERE vehicle_id IN ({marks})",
+            params
+        )["n"]
+
+        # Average mileage
+        average = fetch_one(
+            f"SELECT COALESCE(AVG(mileage), 0) AS n "
+            f"FROM fuel_entries "
+            f"WHERE vehicle_id IN ({marks}) AND mileage > 0",
+            params
+        )["n"]
+
+        # Recent fuel entries
+        recent = fetch_all(
+            f"""
+            SELECT f.*, v.vehicle_name, v.vehicle_number
+            FROM fuel_entries f
+            JOIN vehicles v ON v.vehicle_id = f.vehicle_id
+            WHERE f.vehicle_id IN ({marks})
+            ORDER BY f.fuel_date DESC, f.entry_id DESC
+            LIMIT 10
+            """,
+            params
+        )
+
+    else:
+        entry_count = 0
+        total_fuel = 0
+        total_cost = 0
+        average = 0
+        recent = []
+
+    # Generate role-specific charts
+    from visualizations import generate_all_charts
+
+    chart_key = f"user_{session['user_id']}"
+
+    chart_images = generate_all_charts(
+        vehicle_ids=vehicle_ids,
+        chart_key=chart_key
+    )
 
     return render_template(
-        "vehicles.html",
-        vehicles=vehicle_list,
-        vehicle_types=VEHICLE_TYPES,
-        fuel_types=FUEL_TYPES
+        "dashboard.html",
+        total_vehicles=vehicle_count,
+        total_entries=entry_count,
+        total_fuel=total_fuel,
+        total_cost=total_cost,
+        avg_mileage=average,
+        recent_entries=recent,
+        chart_images=chart_images
     )
 
 
-# =========================================================
-# FUEL ENTRY MANAGEMENT
-# =========================================================
+@app.route("/vehicles", methods=["GET", "POST"])
+@login_required
+def vehicles():
+    if request.method == "POST":
+        if session["role"] == "staff":
+            flash("Staff cannot add vehicles.", "error")
+            return redirect(url_for("vehicles"))
+        name = request.form.get("vehicle_name", "").strip()
+        number = re.sub(r"\s+", "", request.form.get("vehicle_number", "").upper())
+        vehicle_type = request.form.get("vehicle_type", "")
+        fuel_type = request.form.get("fuel_type", "")
+        if len(name) < 2 or not re.fullmatch(r"[A-Z]{2}[0-9]{1,2}[A-Z]{1,3}[0-9]{1,4}", number):
+            flash("Enter a valid vehicle name and registration number.", "error")
+            return redirect(url_for("vehicles"))
+        if vehicle_type not in VEHICLE_TYPES or fuel_type not in FUEL_TYPES:
+            flash("Select valid vehicle and fuel types.", "error")
+            return redirect(url_for("vehicles"))
+        try:
+            owner_id = session["user_id"] if session["role"] == "individual_owner" else None
+            execute_sql("""INSERT INTO vehicles
+                (vehicle_name,vehicle_number,vehicle_type,fuel_type,owner_id)
+                VALUES (%s,%s,%s,%s,%s)""",
+                (name, number, vehicle_type, fuel_type, owner_id))
+            flash("Vehicle added successfully.", "success")
+        except Error:
+            app.logger.exception("Vehicle insert failed")
+            flash("Could not add vehicle. Registration number may already exist.", "error")
+        return redirect(url_for("vehicles"))
+    return render_template("vehicles.html", vehicles=get_visible_vehicles(),
+                           vehicle_types=VEHICLE_TYPES, fuel_types=FUEL_TYPES)
+
+
+@app.route("/vehicles/<int:vehicle_id>", methods=["PUT", "DELETE"])
+@login_required
+def vehicle_api_detail(vehicle_id):
+    if session["role"] == "staff" or not can_access_vehicle(vehicle_id):
+        return jsonify({"success": False, "error": "Not permitted"}), 403
+    if request.method == "DELETE":
+        execute_sql("DELETE FROM vehicles WHERE vehicle_id=%s", (vehicle_id,))
+        return jsonify({"success": True, "message": "Vehicle deleted"})
+    data = request.get_json(silent=True) or {}
+    fields = ["vehicle_name", "vehicle_number", "vehicle_type", "fuel_type"]
+    updates, values = [], []
+    for field in fields:
+        if field in data:
+            updates.append(field + "=%s")
+            values.append(data[field])
+    if not updates:
+        return jsonify({"success": False, "error": "No fields supplied"}), 400
+    values.append(vehicle_id)
+    execute_sql("UPDATE vehicles SET " + ",".join(updates) + " WHERE vehicle_id=%s", tuple(values))
+    return jsonify({"success": True, "message": "Vehicle updated"})
+
 
 @app.route("/fuel-entries", methods=["GET", "POST"])
+@login_required
 def fuel_entries():
-
+    visible = get_visible_vehicles()
     if request.method == "POST":
+        try:
+            vehicle_id = int(request.form.get("vehicle_id", "0"))
+            if not can_access_vehicle(vehicle_id):
+                raise ValueError("You cannot add an entry for this vehicle.")
+            fuel_date = datetime.strptime(request.form.get("fuel_date", ""), "%Y-%m-%d").date()
+            if fuel_date > date.today():
+                raise ValueError("Fuel date cannot be in the future.")
+            previous = positive_decimal(request.form.get("previous_odometer"), "Previous odometer", True)
+            current = positive_decimal(request.form.get("current_odometer"), "Current odometer", True)
+            litres = positive_decimal(request.form.get("fuel_litres"), "Fuel quantity")
+            price = positive_decimal(request.form.get("price_per_litre"), "Price per litre")
+            if current <= previous:
+                raise ValueError("Current odometer must be greater than previous odometer.")
+            latest = fetch_one("""SELECT current_odometer,fuel_date FROM fuel_entries
+                                  WHERE vehicle_id=%s ORDER BY fuel_date DESC,entry_id DESC LIMIT 1""",
+                               (vehicle_id,))
+            if latest and previous != Decimal(str(latest["current_odometer"])):
+                raise ValueError("Previous odometer must match the latest saved reading.")
+            if latest and fuel_date < latest["fuel_date"]:
+                raise ValueError("Fuel date cannot be earlier than the latest entry.")
+            distance = current - previous
+            mileage = calculate_mileage(float(distance), float(litres))
+            cost = calculate_fuel_cost(float(litres), float(price))
+            full_tank = 1 if request.form.get("full_tank_flag") == "on" else 0
+            execute_sql("""INSERT INTO fuel_entries
+                (vehicle_id, fuel_date, previous_odometer, current_odometer,
+                 fuel_litres, price_per_litre, distance, mileage, total_cost,
+                 full_tank_flag, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (vehicle_id, fuel_date, previous, current, litres, price,
+                         distance, mileage, cost, full_tank, session["user_id"]))
+            flash("Fuel entry added successfully.", "success")
+        except (ValueError, InvalidOperation) as error:
+            flash(str(error), "error")
+            try:
+                log_invalid_reading(locals().get("vehicle_id"), str(error))
+            except Exception:
+                pass
+        except Error:
+            app.logger.exception("Fuel entry insert failed")
+            flash("Could not save fuel entry.", "error")
+        return redirect(url_for("fuel_entries"))
+    ids = [v["vehicle_id"] for v in visible]
+    entries = []
+    if ids:
+        marks = ",".join(["%s"] * len(ids))
+        entries = fetch_all("""SELECT f.*,v.vehicle_name,v.vehicle_number
+            FROM fuel_entries f JOIN vehicles v ON v.vehicle_id=f.vehicle_id
+            WHERE f.vehicle_id IN (""" + marks + """)
+            ORDER BY f.fuel_date DESC,f.entry_id DESC""", tuple(ids))
+    return render_template("fuel_entries.html", vehicles=visible, entries=entries,
+                           now_date=date.today().isoformat())
 
-        # Get form values
-        vehicle_id = request.form.get("vehicle_id", "").strip()
-        fuel_date = request.form.get("fuel_date", "").strip()
-        previous_odometer = request.form.get("previous_odometer", "").strip()
-        current_odometer = request.form.get("current_odometer", "").strip()
-        fuel_litres = request.form.get("fuel_litres", "").strip()
-        price_per_litre = request.form.get("price_per_litre", "").strip()
 
-        # Validate vehicle ID
-        if not vehicle_id.isdigit():
-            flash("Please select a valid vehicle.", "error")
-            return redirect(url_for("fuel_entries"))
+@app.route("/api/fuel-entries", methods=["GET", "POST"])
+@login_required
+def fuel_entries_api():
+    if request.method == "GET":
+        ids = [v["vehicle_id"] for v in get_visible_vehicles()]
+        if not ids:
+            return jsonify({"success": True, "data": []})
+        marks = ",".join(["%s"] * len(ids))
+        rows = fetch_all("SELECT * FROM fuel_entries WHERE vehicle_id IN (" + marks + ") ORDER BY entry_id DESC", tuple(ids))
+        return jsonify({"success": True, "data": rows})
+    data = request.get_json(silent=True) or {}
+    required = ["vehicle_id", "fuel_date", "previous_odometer", "current_odometer", "fuel_litres", "price_per_litre"]
+    if any(k not in data for k in required):
+        return jsonify({"success": False, "error": "Missing fields"}), 400
+    try:
+        vehicle_id = int(data["vehicle_id"])
+        if not can_access_vehicle(vehicle_id):
+            return jsonify({"success": False, "error": "Not permitted"}), 403
+        previous = positive_decimal(data["previous_odometer"], "Previous odometer", True)
+        current = positive_decimal(data["current_odometer"], "Current odometer", True)
+        litres = positive_decimal(data["fuel_litres"], "Fuel litres")
+        price = positive_decimal(data["price_per_litre"], "Price per litre")
+        if current <= previous:
+            raise ValueError("Current odometer must be greater than previous odometer.")
+        fuel_date = datetime.strptime(data["fuel_date"], "%Y-%m-%d").date()
+        distance = current - previous
+        mileage = calculate_mileage(float(distance), float(litres))
+        cost = calculate_fuel_cost(float(litres), float(price))
+        entry_id = execute_sql("""INSERT INTO fuel_entries
+    (vehicle_id, fuel_date, previous_odometer, current_odometer,
+     fuel_litres, price_per_litre, distance, mileage, total_cost,
+     full_tank_flag, created_by)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+    (vehicle_id, fuel_date, previous, current, litres, price,
+     distance, mileage, cost,
+     1 if data.get("full_tank_flag") else 0,
+     session["user_id"]))
+        return jsonify({"success": True, "entry_id": entry_id}), 201
+    except (ValueError, InvalidOperation) as error:
+        return jsonify({"success": False, "error": str(error)}), 400
 
-        vehicle_id = int(vehicle_id)
 
-        # Validate date
-        if not validate_fuel_date(fuel_date):
-            flash("Please enter a valid fuel date.", "error")
-            log_invalid_reading(vehicle_id, "Invalid fuel date")
-            return redirect(url_for("fuel_entries"))
 
-        # Validate odometer readings
-        previous = validate_positive_number(
-            previous_odometer, "Previous odometer", allow_zero=True
+@app.route("/api/fuel-entries/<int:entry_id>", methods=["GET", "PUT", "DELETE"])
+@login_required
+def fuel_entry_detail_api(entry_id):
+    entry = fetch_one(
+        "SELECT * FROM fuel_entries WHERE entry_id=%s",
+        (entry_id,)
+    )
+    if not entry:
+        return jsonify({"success": False, "error": "Entry not found"}), 404
+
+    if not can_access_vehicle(entry["vehicle_id"]):
+        return jsonify({"success": False, "error": "Not permitted"}), 403
+
+    role = session["role"]
+    user_id = session["user_id"]
+
+    if request.method == "GET":
+        return jsonify({"success": True, "data": entry})
+
+    # Staff can edit/delete only entries they created
+    if role == "staff" and entry["created_by"] != user_id:
+        return jsonify({
+            "success": False,
+            "error": "You can only modify entries created by you."
+        }), 403
+
+    if request.method == "DELETE":
+        execute_sql(
+            "DELETE FROM fuel_entries WHERE entry_id=%s",
+            (entry_id,)
         )
+        return jsonify({"success": True, "message": "Entry deleted"})
 
-        current = validate_positive_number(
-            current_odometer, "Current odometer", allow_zero=True
+    data = request.get_json(silent=True) or {}
+
+    allowed = [
+        "fuel_date",
+        "previous_odometer",
+        "current_odometer",
+        "fuel_litres",
+        "price_per_litre"
+    ]
+
+    updates = []
+    values = []
+
+    for key in allowed:
+        if key in data:
+            updates.append(key + "=%s")
+            values.append(data[key])
+
+    if not updates:
+        return jsonify({"success": False, "error": "No fields supplied"}), 400
+
+    # Recalculate derived values
+    try:
+        updated = dict(entry)
+        updated.update(data)
+
+        if "fuel_date" in data:
+            updated["fuel_date"] = datetime.strptime(
+                data["fuel_date"][:10], "%Y-%m-%d"
+            ).date()
+
+        previous = positive_decimal(
+            updated["previous_odometer"], "Previous odometer", True
         )
-
-        if previous is None or current is None:
-            flash("Please enter valid odometer readings.", "error")
-            log_invalid_reading(vehicle_id, "Invalid odometer reading")
-            return redirect(url_for("fuel_entries"))
+        current = positive_decimal(
+            updated["current_odometer"], "Current odometer", True
+        )
+        litres = positive_decimal(updated["fuel_litres"], "Fuel litres")
+        price = positive_decimal(updated["price_per_litre"], "Price per litre")
 
         if current <= previous:
-            flash(
-                "Current odometer must be greater than previous odometer.",
-                "error"
-            )
-            log_invalid_reading(
-                vehicle_id, "Current odometer must exceed previous odometer"
-            )
-            return redirect(url_for("fuel_entries"))
+            raise ValueError("Current odometer must be greater than previous odometer.")
 
-        # Check the latest saved fuel entry
-        latest_entry = fetch_one(
-            """
-            SELECT current_odometer, fuel_date
-            FROM fuel_entries
-            WHERE vehicle_id = %s
-            ORDER BY fuel_date DESC, entry_id DESC
-            LIMIT 1
-            """,
-            (vehicle_id,)
-        )
+        if updated["fuel_date"] > date.today():
+            raise ValueError("Fuel date cannot be in the future.")
+        full_tank = 1 if data.get("full_tank_flag", entry["full_tank_flag"]) else 0
+        distance = current - previous
+        mileage = calculate_mileage(float(distance), float(litres))
+        cost = calculate_fuel_cost(float(litres), float(price))
 
-        if latest_entry:
-            latest_odometer = float(latest_entry["current_odometer"])
-            latest_date = latest_entry["fuel_date"]
+        execute_sql("""
+            UPDATE fuel_entries
+            SET fuel_date=%s, previous_odometer=%s, current_odometer=%s,
+                fuel_litres=%s, price_per_litre=%s,
+                distance=%s, mileage=%s, total_cost=%s, full_tank_flag=%s
+            WHERE entry_id=%s
+        """, (
+            updated["fuel_date"], previous, current, litres, price,
+            distance, mileage, cost, full_tank, entry_id
+        ))
 
-            if float(previous) != latest_odometer:
-                flash(
-                    "Previous odometer must match the latest saved "
-                    "odometer reading for this vehicle.",
-                    "error"
-                )
-                log_invalid_reading(
-                    vehicle_id, "Previous odometer does not match latest reading"
-                )
-                return redirect(url_for("fuel_entries"))
+        return jsonify({"success": True, "message": "Entry updated successfully"})
 
-            if isinstance(latest_date, datetime):
-                latest_date = latest_date.date()
+    except (ValueError, InvalidOperation) as error:
+        return jsonify({"success": False, "error": str(error)}), 400
 
-            submitted_date = date.fromisoformat(fuel_date)
-
-            if submitted_date < latest_date:
-                flash(
-                    "Fuel date cannot be earlier than the latest saved entry.",
-                    "error"
-                )
-                log_invalid_reading(
-                    vehicle_id, "Fuel date is earlier than latest saved entry"
-                )
-                return redirect(url_for("fuel_entries"))
-
-        # Validate fuel quantity and price
-        litres = validate_positive_number(
-            fuel_litres, "Fuel litres"
-        )
-
-        price = validate_positive_number(
-            price_per_litre, "Price per litre"
-        )
-
-        if litres is None or price is None:
-            flash(
-                "Fuel litres and price must be greater than zero.",
-                "error"
-            )
-            log_invalid_reading(
-                vehicle_id, "Invalid fuel quantity or price"
-            )
-            return redirect(url_for("fuel_entries"))
-
-        # Calculate values using calculations.py
-        distance = float(current) - float(previous)
-
-        try:
-            mileage = calculate_mileage(
-                float(distance), float(litres)
-            )
-
-            total_cost = calculate_fuel_cost(
-                float(litres), float(price)
-            )
-
-        except ValueError as error:
-            flash(str(error), "error")
-            log_invalid_reading(vehicle_id, str(error))
-            return redirect(url_for("fuel_entries"))
-
-        # Save the fuel entry
-        query = """
-            INSERT INTO fuel_entries
-            (
-                vehicle_id,
-                fuel_date,
-                previous_odometer,
-                current_odometer,
-                fuel_litres,
-                price_per_litre,
-                distance,
-                mileage,
-                total_cost
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """
-
-        values = (
-            vehicle_id,
-            fuel_date,
-            float(previous),
-            float(current),
-            float(litres),
-            float(price),
-            float(distance),
-            float(mileage),
-            float(total_cost)
-        )
-
-        try:
-            execute_sql(query, values)
-            flash("Fuel entry added successfully!", "success")
-
-        except Error as error:
-            flash("Could not save fuel entry. Please check the database.", "error")
-            print("Database error:", error)
-
-        return redirect(url_for("fuel_entries"))
-
-    # GET: Display vehicles and existing fuel entries
-    vehicles = fetch_all(
-        """
-        SELECT vehicle_id, vehicle_name, vehicle_number
-        FROM vehicles
-        ORDER BY vehicle_id DESC
-        """
-    )
-
-    entries = fetch_all(
-        """
-        SELECT
-            f.entry_id,
-            f.vehicle_id,
-            v.vehicle_name,
-            v.vehicle_number,
-            f.fuel_date,
-            f.previous_odometer,
-            f.current_odometer,
-            f.fuel_litres,
-            f.price_per_litre,
-            f.distance,
-            f.mileage,
-            f.total_cost
-        FROM fuel_entries f
-        JOIN vehicles v ON f.vehicle_id = v.vehicle_id
-        ORDER BY f.fuel_date DESC, f.entry_id DESC
-        """
-    )
-
-    return render_template(
-        "fuel_entries.html",
-        vehicles=vehicles,
-        entries=entries
-    )
-
-# =========================================================
-# REPORTS - FOUR REPORTS ONLY
-# =========================================================
+    except Error:
+        app.logger.exception("Fuel entry update failed")
+        return jsonify({"success": False, "error": "Could not update entry"}), 500
 
 
 @app.route("/reports")
+@login_required
 def reports():
-    try:
-        # Load fuel records from MySQL
-        raw_data = load_fuel_data()
+    raw = load_fuel_data()
+    ids = [v["vehicle_id"] for v in get_visible_vehicles()]
+    if session["role"] != "fleet_manager":
+        raw = raw[raw["vehicle_id"].isin(ids)] if not raw.empty else raw
+    clean = clean_fuel_data(raw)
+    vehicle = vehicle_expense_report(clean)
+    monthly = monthly_expense_report(clean)
+    comparison = vehicle_comparison_report(clean)
+    period = period_comparison_report(clean)
+    return render_template("reports.html",
+        vehicle_expenses=vehicle.to_dict("records"),
+        monthly_expenses=monthly.to_dict("records"),
+        vehicle_comparison=comparison.to_dict("records"),
+        period_comparison=period.to_dict("records"))
 
-        # Clean data for analysis
-        clean_data = clean_fuel_data(raw_data)
 
-        # 1. Vehicle Expense Report
-        vehicle_expenses = vehicle_expense_report(clean_data)
+@app.route("/reports/export/<kind>")
+@login_required
+def export_report(kind):
+    raw = load_fuel_data()
+    ids = [v["vehicle_id"] for v in get_visible_vehicles()]
+    if session["role"] != "fleet_manager":
+        raw = raw[raw["vehicle_id"].isin(ids)] if not raw.empty else raw
+    clean = clean_fuel_data(raw)
+    if kind == "excel":
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            clean.to_excel(writer, index=False, sheet_name="Fuel Records")
+            vehicle_expense_report(clean).to_excel(writer, index=False, sheet_name="Vehicle Expenses")
+            monthly_expense_report(clean).to_excel(writer, index=False, sheet_name="Monthly Expenses")
+        output.seek(0)
+        return send_file(output, as_attachment=True, download_name="fuel_report.xlsx",
+                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if kind == "pdf":
+        from reportlab.lib.pagesizes import A4, landscape
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        output = BytesIO()
+        doc = SimpleDocTemplate(output, pagesize=landscape(A4))
+        styles = getSampleStyleSheet()
+        rows = [["Vehicle", "Date", "Distance", "Litres", "Mileage", "Cost"]]
+        for _, row in clean.iterrows():
+            rows.append([str(row.get("vehicle_name","")), str(row.get("fuel_date","")),
+                         str(round(float(row.get("distance",0)),2)),
+                         str(round(float(row.get("fuel_litres",0)),2)),
+                         str(round(float(row.get("mileage",0)),2)),
+                         str(round(float(row.get("total_cost",0)),2))])
+        table = Table(rows, repeatRows=1)
+        table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#173b68")),
+                                   ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+                                   ("GRID",(0,0),(-1,-1),0.5,colors.grey),
+                                   ("FONTSIZE",(0,0),(-1,-1),8)]))
+        doc.build([Paragraph("Fuel Consumption Report", styles["Title"]), Spacer(1,12), table])
+        output.seek(0)
+        return send_file(output, as_attachment=True, download_name="fuel_report.pdf",
+                         mimetype="application/pdf")
+    return "Unknown export format", 404
 
-        # Add vehicle number and entry count
-        if not vehicle_expenses.empty:
-            vehicle_details = raw_data[
-                ["vehicle_name", "vehicle_number", "entry_id"]
-            ].copy()
-
-            vehicle_details = vehicle_details.groupby(
-                "vehicle_name", as_index=False
-            ).agg(
-                vehicle_number=("vehicle_number", "first"),
-                entry_count=("entry_id", "count")
-            )
-
-            vehicle_expenses = vehicle_expenses.merge(
-                vehicle_details, on="vehicle_name", how="left"
-            )
-
-        # 2. Monthly Expense Report
-        monthly_expenses = monthly_expense_report(clean_data)
-
-        # Add the fields expected by reports.html
-        if not monthly_expenses.empty:
-            monthly_details = clean_data.copy()
-            monthly_details["period"] = (
-                monthly_details["fuel_date"]
-                .dt.to_period("M")
-                .astype(str)
-            )
-
-            counts = monthly_details.groupby(
-                "period", as_index=False
-            ).agg(
-                total_entries=("entry_id", "count"),
-                total_fuel=("fuel_litres", "sum"),
-                total_distance=("distance", "sum")
-            )
-
-            monthly_expenses = monthly_expenses.rename(
-                columns={"month": "period"}
-            ).merge(counts, on="period", how="left")
-
-            monthly_expenses = monthly_expenses.sort_values(
-                "period", ascending=False
-            )
-
-        # 3. Vehicle Comparison Report
-        vehicle_comparison = vehicle_comparison_report(clean_data)
-
-        if not vehicle_comparison.empty:
-            vehicle_details = raw_data[
-                ["vehicle_name", "vehicle_number"]
-            ].drop_duplicates(subset=["vehicle_name"])
-
-            vehicle_comparison = vehicle_comparison.merge(
-                vehicle_details, on="vehicle_name", how="left"
-            )
-
-            vehicle_comparison = vehicle_comparison.rename(
-                columns={"average_mileage": "avg_mileage"}
-            )
-
-        # 4. Period Comparison Report
-        period_comparison = period_comparison_report(clean_data)
-
-        if not period_comparison.empty:
-            monthly_details = clean_data.copy()
-            monthly_details["period"] = (
-                monthly_details["fuel_date"]
-                .dt.to_period("M")
-                .astype(str)
-            )
-
-            counts = monthly_details.groupby(
-                "period", as_index=False
-            ).agg(
-                total_entries=("entry_id", "count"),
-                total_fuel=("fuel_litres", "sum"),
-                total_distance=("distance", "sum")
-            )
-
-            period_comparison = period_comparison.rename(
-                columns={"month": "period"}
-            ).merge(counts, on="period", how="left")
-
-        return render_template(
-            "reports.html",
-            vehicle_expenses=vehicle_expenses.to_dict("records"),
-            monthly_expenses=monthly_expenses.to_dict("records"),
-            vehicle_comparison=vehicle_comparison.to_dict("records"),
-            period_comparison=period_comparison.to_dict("records")
-        )
-
-    except Exception:
-        app.logger.exception("Reports could not be loaded")
-
-        return render_template(
-            "reports.html",
-            vehicle_expenses=[],
-            monthly_expenses=[],
-            vehicle_comparison=[],
-            period_comparison=[]
-        )
-
-# =========================================================
-# INVALID READINGS LOG
-# =========================================================
 
 @app.route("/invalid-readings")
+@login_required
+@roles_required("fleet_manager")
 def invalid_readings():
-    try:
-        invalid_records = fetch_all("""
-            SELECT
-                l.log_id,
-                v.vehicle_name,
-                v.vehicle_number,
-                l.entered_date,
-                l.previous_odometer,
-                l.current_odometer,
-                l.fuel_litres,
-                l.reason,
-                l.logged_at
-            FROM invalid_readings l
-            LEFT JOIN vehicles v
-                ON l.vehicle_id = v.vehicle_id
-            ORDER BY l.logged_at DESC, l.log_id DESC
-        """)
-
-    except Error:
-        app.logger.exception("Could not load invalid-reading log")
-        invalid_records = []
-        flash("Could not load invalid readings. Check the database.", "error")
-
-    return render_template(
-        "invalid_readings.html",
-        invalid_readings=invalid_records,
-        records=invalid_records
-    )
+    records = fetch_all("""SELECT l.*,v.vehicle_name,v.vehicle_number
+        FROM invalid_readings l LEFT JOIN vehicles v ON v.vehicle_id=l.vehicle_id
+        ORDER BY l.logged_at DESC,l.log_id DESC""")
+    return render_template("invalid_readings.html", records=records)
 
 
-# =========================================================
-# API ROUTES
-# =========================================================
+@app.route("/staff", methods=["GET", "POST"])
+@login_required
+@roles_required("fleet_manager")
+def staff():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        vehicle_ids = request.form.getlist("vehicle_ids")
+        if not name or not email or len(password) < 6:
+            flash("Enter staff details and a password of at least 6 characters.", "error")
+        else:
+            try:
+                staff_id = execute_sql("INSERT INTO users(full_name,email,password_hash,role) VALUES(%s,%s,%s,'staff')",
+                    (name, email, generate_password_hash(password)))
+                for vehicle_id in vehicle_ids:
+                    execute_sql(
+                        """INSERT IGNORE INTO staff_assignments
+                           (vehicle_id, staff_user_id, assigned_by)
+                           VALUES (%s, %s, %s)""",
+                        (int(vehicle_id), staff_id, session["user_id"])
+                    )
+                flash("Staff account created.", "success")
+            except Error:
+                flash("Could not create staff account. Email may already exist.", "error")
+        return redirect(url_for("staff"))
+    return render_template("staff.html", vehicles=get_visible_vehicles(),
+        staff_members=fetch_all("SELECT user_id, full_name, email FROM users WHERE role='staff' ORDER BY full_name"))
 
-@app.route("/api/vehicles", methods=["GET"])
-def api_vehicles():
-    try:
-        return {
-            "success": True,
-            "data": fetch_all("""
-                SELECT vehicle_id, vehicle_name, vehicle_number,
-                       vehicle_type, fuel_type
-                FROM vehicles
-                ORDER BY vehicle_id
-            """)
-        }
-    except Error:
-        app.logger.exception("Vehicle API failed")
-        return {"success": False, "error": "Database error"}, 500
-
-
-@app.route("/api/vehicles/<int:vehicle_id>", methods=["GET"])
-def api_vehicle_detail(vehicle_id):
-    try:
-        vehicle = fetch_one("""
-            SELECT vehicle_id, vehicle_name, vehicle_number,
-                   vehicle_type, fuel_type
-            FROM vehicles
-            WHERE vehicle_id = %s
-        """, (vehicle_id,))
-
-        if not vehicle:
-            return {"success": False, "error": "Vehicle not found"}, 404
-
-        return {"success": True, "data": vehicle}
-
-    except Error:
-        app.logger.exception("Vehicle detail API failed")
-        return {"success": False, "error": "Database error"}, 500
-
-
-@app.route("/api/fuel-entries", methods=["GET"])
-def api_fuel_entries():
-    try:
-        entries = fetch_all("""
-            SELECT f.entry_id, f.vehicle_id,
-                   v.vehicle_name, v.vehicle_number,
-                   f.fuel_date, f.previous_odometer,
-                   f.current_odometer, f.distance,
-                   f.fuel_litres, f.price_per_litre,
-                   f.mileage, f.total_cost
-            FROM fuel_entries f
-            JOIN vehicles v ON f.vehicle_id = v.vehicle_id
-            ORDER BY f.entry_id DESC
-        """)
-
-        return {"success": True, "data": entries}
-
-    except Error:
-        app.logger.exception("Fuel entries API failed")
-        return {"success": False, "error": "Database error"}, 500
-
-
-@app.route("/api/fuel-entries/<int:entry_id>", methods=["GET"])
-def api_fuel_entry_detail(entry_id):
-    try:
-        entry = fetch_one("""
-            SELECT f.entry_id, f.vehicle_id,
-                   v.vehicle_name, v.vehicle_number,
-                   f.fuel_date, f.previous_odometer,
-                   f.current_odometer, f.distance,
-                   f.fuel_litres, f.price_per_litre,
-                   f.mileage, f.total_cost
-            FROM fuel_entries f
-            JOIN vehicles v ON f.vehicle_id = v.vehicle_id
-            WHERE f.entry_id = %s
-        """, (entry_id,))
-
-        if not entry:
-            return {"success": False, "error": "Fuel entry not found"}, 404
-
-        return {"success": True, "data": entry}
-
-    except Error:
-        app.logger.exception("Fuel entry detail API failed")
-        return {"success": False, "error": "Database error"}, 500
-
-
-@app.route("/api/vehicles/<int:vehicle_id>/fuel-entries", methods=["GET"])
-def api_vehicle_fuel_entries(vehicle_id):
-    try:
-        vehicle = fetch_one(
-            "SELECT vehicle_id FROM vehicles WHERE vehicle_id = %s",
-            (vehicle_id,)
-        )
-
-        if not vehicle:
-            return {"success": False, "error": "Vehicle not found"}, 404
-
-        entries = fetch_all("""
-            SELECT entry_id, vehicle_id, fuel_date,
-                   previous_odometer, current_odometer,
-                   distance, fuel_litres, price_per_litre,
-                   mileage, total_cost
-            FROM fuel_entries
-            WHERE vehicle_id = %s
-            ORDER BY fuel_date DESC
-        """, (vehicle_id,))
-
-        return {"success": True, "data": entries}
-
-    except Error:
-        app.logger.exception("Vehicle fuel history API failed")
-        return {"success": False, "error": "Database error"}, 500
-
-
-# =========================================================
-# RUN APPLICATION
-# =========================================================
 
 if __name__ == "__main__":
     app.run(debug=True)
+
+

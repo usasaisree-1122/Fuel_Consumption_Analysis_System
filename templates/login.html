@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block content %}
+<div class="card" style="max-width:430px;margin:50px auto"><h2>Login</h2>
+<form method="post"><label>Email</label><input type="email" name="email" required>
+<label>Password</label><input type="password" name="password" required><button type="submit">Login</button></form>
+<p>New user? <a href="/register">Create account</a></p></div>{% endblock %}
